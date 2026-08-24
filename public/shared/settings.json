@@ -1,8 +1,18 @@
 {
-  "updatedAt": "2026-08-24T07:59:32.507Z",
+  "updatedAt": "2026-08-24T12:18:51.275Z",
   "criteria": {
-    "verdictMode": "champion_and_median",
-    "verdictThreshold": 0,
+    "championRule": {
+      "enabled": true,
+      "threshold": -0.4
+    },
+    "medianRule": {
+      "enabled": true,
+      "threshold": -0.3
+    },
+    "vocffRule": {
+      "enabled": false,
+      "threshold": 0
+    },
     "pceMin": 18,
     "ffMin": 0.5,
     "resistanceMin": 0
