@@ -115,56 +115,68 @@ function loadDefaultMeta(): ReportMetaInput {
 /* ================= 邮件正文（报告总览 + 分析结论，文本 / HTML 双渲染） ================= */
 
 /** 邮件正文内容块：纯文本与 HTML 富文本共用同一内容序列；
- *  overview 块在 HTML 中渲染为 PDF 报告总览截图（base64 PNG），纯文本回退为矩阵文本行；
- *  chart 块在 HTML 中渲染为内嵌箱线图图片（base64 PNG），纯文本中以附件说明代替 */
+ *  meta 块渲染为报告头信息表（短字段两两并排，长字段整行）；
+ *  overview 块在 HTML 中渲染为 PDF 报告总览截图（无截图时回退结构化表格），纯文本按列宽对齐；
+ *  chart 块在 HTML 中渲染为内嵌箱线图图片，纯文本中以附件说明代替；
+ *  criteria 块渲染为统计口径脚注小字 */
+interface MetaRow {
+  label: string;
+  value: string;
+  /** 值较长（如批次清单）时整行显示 */
+  wide?: boolean;
+}
+
 type EmailBlock =
   | { kind: 'title'; text: string }
+  | { kind: 'meta'; rows: MetaRow[] }
   | { kind: 'h2'; text: string }
   | { kind: 'p'; text: string }
-  | { kind: 'overview'; lines: string[] }
-  | { kind: 'chart' };
+  | { kind: 'overview'; header: string[]; rows: string[][]; summary?: string }
+  | { kind: 'chart' }
+  | { kind: 'criteria'; text: string };
 
-/** 构建邮件正文内容块（精简版）：报告头关键信息 + 一、报告总览（含箱线图）+ 二、分析结论 */
+/** 构建邮件正文内容块（精简版）：报告头关键信息 + 一、报告总览（含箱线图）+ 二、分析结论 + 口径脚注 */
 function buildEmailBlocks(meta: ReportMetaInput, data: ReportData): EmailBlock[] {
   const blocks: EmailBlock[] = [];
 
-  /* 报告头 */
+  /* 报告头：信息表（短字段两两并排，批次清单等长字段整行） */
   blocks.push({ kind: 'title', text: '钙钛矿器件验证对比分析报告' });
-  blocks.push({ kind: 'p', text: `汇报人：${meta.reporter?.trim() || '—'}` });
-  blocks.push({ kind: 'p', text: `汇报日期：${meta.report_date || '—'}` });
-  blocks.push({
-    kind: 'p',
-    text: `参与批次：${data.totals.batches} 个（${data.groups.map((g) => g.batchId).join('、') || '—'}）`,
-  });
-  if (data.baseline) blocks.push({ kind: 'p', text: `基准批次：${data.baseline.baselineBatchId}` });
-  blocks.push({ kind: 'p', text: `测试记录：${data.totals.samples} 条（反扫 ${data.totals.reverse} 条）` });
-  blocks.push({
-    kind: 'p',
-    text: `有效测试记录：${data.totals.valid}/${data.totals.reverse}（符合口径反扫数 / 反扫总数）`,
-  });
+  const metaRows: MetaRow[] = [
+    { label: '汇报人', value: meta.reporter?.trim() || '—' },
+    { label: '汇报日期', value: meta.report_date || '—' },
+    {
+      label: '参与批次',
+      value: `${data.totals.batches} 个（${data.groups.map((g) => g.batchId).join('、') || '—'}）`,
+      wide: true,
+    },
+  ];
+  if (data.baseline) metaRows.push({ label: '基准批次', value: data.baseline.baselineBatchId });
+  metaRows.push(
+    { label: '测试记录', value: `${data.totals.samples} 条（反扫 ${data.totals.reverse} 条）` },
+    { label: '有效测试记录', value: `${data.totals.valid}/${data.totals.reverse}（符合口径反扫数 / 反扫总数）` },
+  );
+  blocks.push({ kind: 'meta', rows: metaRows });
 
-  /* 一、报告总览（HTML：PDF 报告总览块截图 + 箱线图；纯文本回退矩阵文本行） */
+  /* 一、报告总览（HTML：PDF 报告总览块截图 + 箱线图；纯文本按列宽对齐矩阵） */
   if (data.groups.length > 0) {
     blocks.push({ kind: 'h2', text: '一、报告总览' });
-    const lines: string[] = [
-      '批次 | PCE冠军(%) | PCE中位(%) | Voc中位(V) | Jsc中位(mA/cm²) | FF | Voc·FF平均(V) | 判定',
-    ];
+    const header = ['批次', 'PCE冠军(%)', 'PCE中位(%)', 'Voc中位(V)', 'Jsc中位(mA/cm²)', 'FF', 'Voc·FF平均(V)', '判定'];
+    const rows: string[][] = [];
     for (const g of data.groups) {
       const isBase = g.batchId === data.baseline?.baselineBatchId;
       const verdict = data.baseline?.diffs.find((d) => d.batchId === g.batchId)?.verdict;
-      const cols = [
+      rows.push([
+        `${isBase ? '⚑ ' : ''}${batchLabelOf(g.batchId)}`,
         fmt(g.champion?.efficiency ?? NaN),
         fmt(data.metricStats['efficiency'][g.batchId]?.median ?? NaN),
         fmt(data.metricStats['voc_V'][g.batchId]?.median ?? NaN),
         fmt(data.metricStats['jsc_mA_cm2'][g.batchId]?.median ?? NaN),
         fmt(data.metricStats['ff'][g.batchId]?.median ?? NaN),
         fmt(data.metricStats['vocff'][g.batchId]?.mean ?? NaN),
-      ].join(' | ');
-      lines.push(`${isBase ? '⚑ ' : ''}${batchLabelOf(g.batchId)} | ${cols} | ${isBase ? '基准' : verdict ?? '—'}`);
+        isBase ? '基准' : verdict ?? '—',
+      ]);
     }
-    const overviewText = buildOverviewSummary(data);
-    if (overviewText) lines.push(overviewText);
-    blocks.push({ kind: 'overview', lines });
+    blocks.push({ kind: 'overview', header, rows, summary: buildOverviewSummary(data) || undefined });
     blocks.push({ kind: 'chart' });
   }
 
@@ -173,21 +185,54 @@ function buildEmailBlocks(meta: ReportMetaInput, data: ReportData): EmailBlock[]
     blocks.push({ kind: 'h2', text: '二、分析结论' });
     blocks.push({ kind: 'p', text: data.baseline.conclusion });
   }
+
+  /* 统计口径脚注 */
+  blocks.push({ kind: 'criteria', text: `统计口径：有效测试记录 = ${criteriaTextShort(data.thresholds)}` });
   return blocks;
 }
 
-/** 渲染纯文本正文（mailto 与剪贴板 text/plain；overview 回退矩阵文本行，图表以附件说明代替） */
+/* ---- 纯文本列对齐（中文按 2 字符宽计算，等宽字体下视觉对齐） ---- */
+
+function dispWidth(s: string): number {
+  let w = 0;
+  for (const ch of s) w += ch.charCodeAt(0) > 0xff ? 2 : 1;
+  return w;
+}
+
+function padEndW(s: string, w: number): string {
+  return s + ' '.repeat(Math.max(0, w - dispWidth(s)));
+}
+
+function padStartW(s: string, w: number): string {
+  return ' '.repeat(Math.max(0, w - dispWidth(s))) + s;
+}
+
+/** 渲染纯文本正文（mailto 与剪贴板 text/plain；overview 按列宽对齐，图表以附件说明代替） */
 function renderEmailText(blocks: EmailBlock[]): string {
   const lines: string[] = [];
   for (const b of blocks) {
     if (b.kind === 'chart') continue;
     if (b.kind === 'title') {
       lines.push(b.text, '');
+    } else if (b.kind === 'meta') {
+      for (const r of b.rows) lines.push(`${r.label}：${r.value}`);
+      lines.push('');
     } else if (b.kind === 'h2') {
       if (lines.length > 0 && lines[lines.length - 1] !== '') lines.push('');
       lines.push(b.text);
     } else if (b.kind === 'overview') {
-      lines.push(...b.lines);
+      /* 各列取最大显示宽度（表头与数据），首列与判定列左对齐、数值列右对齐 */
+      const colW = b.header.map((h, i) =>
+        Math.max(dispWidth(h), ...b.rows.map((r) => dispWidth(r[i] ?? ''))),
+      );
+      lines.push(b.header.map((h, i) => (i === 0 || i === b.header.length - 1 ? padEndW(h, colW[i]) : padStartW(h, colW[i]))).join('  '));
+      for (const row of b.rows) {
+        lines.push(row.map((c, i) => (i === 0 || i === row.length - 1 ? padEndW(c, colW[i]) : padStartW(c, colW[i]))).join('  '));
+      }
+      if (b.summary) lines.push('', b.summary);
+    } else if (b.kind === 'criteria') {
+      if (lines.length > 0 && lines[lines.length - 1] !== '') lines.push('');
+      lines.push(b.text);
     } else {
       lines.push(b.text);
     }
@@ -206,7 +251,7 @@ function escapeHtml(s: string): string {
 /** 邮件正文字体（与报告导出一致：微软雅黑 / 方正雅黑） */
 const EMAIL_FONT_STACK = `'Microsoft YaHei','方正雅黑','PingFang SC',sans-serif`;
 
-/** 渲染 HTML 富文本正文：报告总览块与箱线图以 base64 PNG 内嵌（粘贴到飞书 / Gmail 等邮件客户端即带图） */
+/** 渲染 HTML 富文本正文：报告总览块与箱线图以 base64 内嵌（粘贴到飞书 / Gmail 等邮件客户端即带图） */
 function renderEmailHtml(blocks: EmailBlock[], charts: ChartImage[], overview?: ChartImage): string {
   const parts: string[] = [];
   let chartIdx = 0;
@@ -215,12 +260,43 @@ function renderEmailHtml(blocks: EmailBlock[], charts: ChartImage[], overview?: 
       parts.push(
         `<h1 style="margin:0 0 16px;font-size:18px;line-height:1.4;font-weight:700;color:#0f172a;">${escapeHtml(b.text)}</h1>`,
       );
-    } else if (b.kind === 'h2') {
+    } else if (b.kind === 'meta') {
+      /* 报告头信息表：短字段两两并排、长字段整行（浅灰底卡片） */
+      const cells: string[] = [];
+      const td = (r: MetaRow, wide: boolean) =>
+        `<td${wide ? ' colspan="2"' : ''} style="padding:6px 12px;vertical-align:top;">` +
+        `<span style="font-size:12px;color:#64748b;">${escapeHtml(r.label)}：</span>` +
+        `<span style="font-size:13px;font-weight:600;color:#1e293b;">${escapeHtml(r.value)}</span>` +
+        `</td>`;
+      const shortRows: MetaRow[] = [];
+      for (const r of b.rows) {
+        if (r.wide) {
+          if (shortRows.length > 0) {
+            cells.push(shortRows.map((s) => td(s, false)).join(''));
+            shortRows.length = 0;
+          }
+          cells.push(td(r, true));
+        } else {
+          shortRows.push(r);
+          if (shortRows.length === 2) {
+            cells.push(shortRows.map((s) => td(s, false)).join(''));
+            shortRows.length = 0;
+          }
+        }
+      }
+      if (shortRows.length > 0) cells.push(shortRows.map((s) => td(s, false)).join('<td style="padding:6px 12px;"></td>'));
       parts.push(
-        `<h2 style="margin:20px 0 8px;font-size:15px;line-height:1.4;font-weight:700;color:#0f172a;">${escapeHtml(b.text)}</h2>`,
+        `<table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 4px;border-collapse:separate;background:#f8fafc;border-radius:8px;">` +
+          `<tr>${cells.join('</tr><tr>')}</tr>` +
+          `</table>`,
+      );
+    } else if (b.kind === 'h2') {
+      /* 章节标题：上方细分隔线 + 左侧主题色竖条 */
+      parts.push(
+        `<h2 style="margin:24px 0 10px;padding:14px 0 0 10px;border-top:1px solid #e2e8f0;border-left:3px solid #2563eb;font-size:15px;line-height:1.4;font-weight:700;color:#0f172a;">${escapeHtml(b.text)}</h2>`,
       );
     } else if (b.kind === 'p') {
-      /* pre-wrap 保留总览/汇总行的对齐空格与缩进 */
+      /* pre-wrap 保留汇总行的对齐空格与缩进 */
       parts.push(
         `<p style="margin:4px 0;font-size:13px;line-height:1.7;color:#1e293b;white-space:pre-wrap;">${escapeHtml(b.text)}</p>`,
       );
@@ -229,32 +305,47 @@ function renderEmailHtml(blocks: EmailBlock[], charts: ChartImage[], overview?: 
         /* PDF 报告总览块截图（热力矩阵 + 汇总文字） */
         parts.push(
           `<div style="margin:12px 0 20px;">` +
-            `<img src="data:image/png;base64,${overview.base64}" width="${overview.width}" height="${overview.height}" ` +
+            `<img src="data:${overview.mime};base64,${overview.base64}" width="${overview.width}" height="${overview.height}" ` +
             `style="display:block;width:100%;max-width:${overview.width}px;height:auto;border:1px solid #e2e8f0;border-radius:8px;" />` +
             `</div>`,
         );
       } else {
-        /* 截图不可用时回退矩阵文本行 */
-        for (const line of b.lines) {
-          parts.push(
-            `<p style="margin:4px 0;font-size:13px;line-height:1.7;color:#1e293b;white-space:pre-wrap;">${escapeHtml(line)}</p>`,
-          );
-        }
+        /* 截图不可用时回退结构化表格 */
+        parts.push(
+          `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:12px 0 20px;font-size:12px;color:#1e293b;">` +
+            `<tr>${b.header.map((h) => `<th style="border:1px solid #e2e8f0;padding:6px 8px;background:#f1f5f9;font-weight:600;">${escapeHtml(h)}</th>`).join('')}</tr>` +
+            b.rows
+              .map(
+                (row) =>
+                  `<tr>${row.map((c) => `<td style="border:1px solid #e2e8f0;padding:6px 8px;text-align:center;">${escapeHtml(c)}</td>`).join('')}</tr>`,
+              )
+              .join('') +
+            `</table>`,
+        );
       }
+      if (b.summary) {
+        parts.push(
+          `<p style="margin:8px 0 20px;font-size:13px;line-height:1.7;color:#1e293b;white-space:pre-wrap;">${escapeHtml(b.summary)}</p>`,
+        );
+      }
+    } else if (b.kind === 'criteria') {
+      parts.push(
+        `<p style="margin:20px 0 0;font-size:12px;line-height:1.6;color:#94a3b8;">${escapeHtml(b.text)}</p>`,
+      );
     } else {
       const c = charts[chartIdx++];
       if (!c) continue;
       parts.push(
         `<div style="margin:12px 0 20px;">` +
           `<div style="font-size:13px;font-weight:600;color:#334155;margin-bottom:6px;">${escapeHtml(c.title)}</div>` +
-          `<img src="data:image/png;base64,${c.base64}" width="${c.width}" height="${c.height}" ` +
+          `<img src="data:${c.mime};base64,${c.base64}" width="${c.width}" height="${c.height}" ` +
           `style="display:block;width:100%;max-width:${c.width}px;height:auto;border:1px solid #e2e8f0;border-radius:8px;" />` +
           `</div>`,
       );
     }
   }
   parts.push(
-    `<p style="margin:20px 0 0;font-size:12px;color:#64748b;">（以上为报告总览与分析结论；完整报告（含各章节明细与图表）请查看附件 Excel，PDF 版可于系统内导出）</p>` +
+    `<p style="margin:12px 0 0;font-size:12px;color:#64748b;">（以上为报告总览与分析结论；完整报告（含各章节明细与图表）请查看附件 Excel，PDF 版可于系统内导出）</p>` +
       `<p style="margin:4px 0 0;font-size:12px;color:#94a3b8;">本报告由器件验证数据分析系统生成</p>`,
   );
   return `<div style="font-family:${EMAIL_FONT_STACK};max-width:760px;">${parts.join('')}</div>`;
@@ -747,7 +838,11 @@ export default function ReportEditor() {
       // 正文：报告总览 + 分析结论（图表内嵌）以富文本写入剪贴板，粘贴到邮件客户端即带图
       const blocks = buildEmailBlocks(meta, reportData);
       const text = renderEmailText(blocks);
-      const subject = `器件分析报告 - ${reportData.groups.map((g) => g.batchId).join(' vs ')}`;
+      /* 主题带日期与汇报人：器件分析报告(YYMMDD)-A vs B-汇报人（缺省段自动省略） */
+      const dateDigits = (meta.report_date || '').replace(/\D/g, '');
+      const dateTag = dateDigits.length >= 8 ? `(${dateDigits.slice(2, 8)})` : '';
+      const reporterTag = meta.reporter?.trim() ? ` - ${meta.reporter.trim()}` : '';
+      const subject = `器件分析报告${dateTag} - ${reportData.groups.map((g) => g.batchId).join(' vs ')}${reporterTag}`;
       let richCopied = false;
       if (charts.length > 0 || overview) {
         try {

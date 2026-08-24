@@ -336,12 +336,13 @@ export async function exportPdf(
 
 /* ================= Excel 导出（多 Sheet） ================= */
 
-/** 图表截图（base64 不含 data:image/png;base64, 前缀） */
+/** 图表截图（base64 不含 data:…;base64, 前缀；mime 标注编码格式） */
 export interface ChartImage {
   title: string;
   base64: string;
   width: number;
   height: number;
+  mime: 'image/png' | 'image/jpeg';
 }
 
 /** 字符串显示宽度（中日韩字符按 2 计） */
@@ -717,7 +718,10 @@ export function buildReportWorkbook(
       t.font = { bold: true, size: 11, color: { argb: 'FF000000' } };
       t.alignment = { horizontal: 'left', vertical: 'middle' };
       ws.getRow(rowIdx).height = 22;
-      const imageId = wb.addImage({ base64: chart.base64, extension: 'png' });
+      const imageId = wb.addImage({
+        base64: chart.base64,
+        extension: chart.mime === 'image/jpeg' ? 'jpeg' : 'png',
+      });
       ws.addImage(imageId, {
         tl: { col: 0.05, row: rowIdx }, // 0 基行号：锚定在标题行下一行
         ext: { width: chart.width, height: chart.height },
@@ -811,9 +815,10 @@ export async function exportReportExcelBlob(
     );
     charts.push({
       title: `${metric.label}${metric.unit ? `（${metric.unit}）` : ''} 分布对比`,
-      base64: chartBlocks[i].canvas.toDataURL('image/png').split(',')[1] ?? '',
+      base64: chartBlocks[i].canvas.toDataURL('image/jpeg', 0.92).split(',')[1] ?? '',
       width: displayWidth,
       height: displayHeight,
+      mime: 'image/jpeg',
     });
   }
 
@@ -827,9 +832,10 @@ export async function exportReportExcelBlob(
     );
     overview = {
       title: '报告总览',
-      base64: overviewBlock.canvas.toDataURL('image/png').split(',')[1] ?? '',
+      base64: overviewBlock.canvas.toDataURL('image/jpeg', 0.92).split(',')[1] ?? '',
       width: displayWidth,
       height: displayHeight,
+      mime: 'image/jpeg',
     };
   }
 
