@@ -787,13 +787,13 @@ export async function exportReportExcel(
 }
 
 /** 导出 Excel 为 Blob（不触发下载，供邮件发送等场景复用）；
- *  同时返回图表截图（供邮件正文内嵌图片复用，避免二次渲染） */
+ *  同时返回图表截图与报告总览块截图（供邮件正文内嵌图片复用，避免二次渲染） */
 export async function exportReportExcelBlob(
   paperEl: HTMLElement,
   meta: ReportMetaInput,
   data: ReportData,
   options: { onProgress?: (msg: string) => void } = {},
-): Promise<{ blob: Blob; charts: ChartImage[] }> {
+): Promise<{ blob: Blob; charts: ChartImage[]; overview?: ChartImage }> {
   options.onProgress?.('正在渲染报告图表…');
   const paper = await capturePaper(paperEl);
   const blocks = extractBlocks(paper, paperEl);
@@ -817,6 +817,22 @@ export async function exportReportExcelBlob(
     });
   }
 
+  /* 报告总览块截图（PDF 报告 data-block="overview" 整块，含热力矩阵与汇总文字） */
+  const overviewBlock = blocks.find((b) => b.name === 'overview');
+  let overview: ChartImage | undefined;
+  if (overviewBlock) {
+    const displayWidth = 720;
+    const displayHeight = Math.round(
+      (overviewBlock.canvas.height / overviewBlock.canvas.width) * displayWidth,
+    );
+    overview = {
+      title: '报告总览',
+      base64: overviewBlock.canvas.toDataURL('image/png').split(',')[1] ?? '',
+      width: displayWidth,
+      height: displayHeight,
+    };
+  }
+
   options.onProgress?.('正在生成 Excel 文件…');
   const wb = buildReportWorkbook(meta, data, charts);
   const buffer = await wb.xlsx.writeBuffer();
@@ -825,6 +841,7 @@ export async function exportReportExcelBlob(
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     }),
     charts,
+    overview,
   };
 }
 

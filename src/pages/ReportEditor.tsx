@@ -115,11 +115,13 @@ function loadDefaultMeta(): ReportMetaInput {
 /* ================= 邮件正文（报告总览 + 分析结论，文本 / HTML 双渲染） ================= */
 
 /** 邮件正文内容块：纯文本与 HTML 富文本共用同一内容序列；
+ *  overview 块在 HTML 中渲染为 PDF 报告总览截图（base64 PNG），纯文本回退为矩阵文本行；
  *  chart 块在 HTML 中渲染为内嵌箱线图图片（base64 PNG），纯文本中以附件说明代替 */
 type EmailBlock =
   | { kind: 'title'; text: string }
   | { kind: 'h2'; text: string }
   | { kind: 'p'; text: string }
+  | { kind: 'overview'; lines: string[] }
   | { kind: 'chart' };
 
 /** 构建邮件正文内容块（精简版）：报告头关键信息 + 一、报告总览（含箱线图）+ 二、分析结论 */
@@ -141,13 +143,12 @@ function buildEmailBlocks(meta: ReportMetaInput, data: ReportData): EmailBlock[]
     text: `有效测试记录：${data.totals.valid}/${data.totals.reverse}（符合口径反扫数 / 反扫总数）`,
   });
 
-  /* 一、报告总览（矩阵 + 汇总文字 + 箱线图） */
+  /* 一、报告总览（HTML：PDF 报告总览块截图 + 箱线图；纯文本回退矩阵文本行） */
   if (data.groups.length > 0) {
     blocks.push({ kind: 'h2', text: '一、报告总览' });
-    blocks.push({
-      kind: 'p',
-      text: '批次 | PCE冠军(%) | PCE中位(%) | Voc中位(V) | Jsc中位(mA/cm²) | FF | Voc·FF平均(V) | 判定',
-    });
+    const lines: string[] = [
+      '批次 | PCE冠军(%) | PCE中位(%) | Voc中位(V) | Jsc中位(mA/cm²) | FF | Voc·FF平均(V) | 判定',
+    ];
     for (const g of data.groups) {
       const isBase = g.batchId === data.baseline?.baselineBatchId;
       const verdict = data.baseline?.diffs.find((d) => d.batchId === g.batchId)?.verdict;
@@ -159,13 +160,11 @@ function buildEmailBlocks(meta: ReportMetaInput, data: ReportData): EmailBlock[]
         fmt(data.metricStats['ff'][g.batchId]?.median ?? NaN),
         fmt(data.metricStats['vocff'][g.batchId]?.mean ?? NaN),
       ].join(' | ');
-      blocks.push({
-        kind: 'p',
-        text: `${isBase ? '⚑ ' : ''}${batchLabelOf(g.batchId)} | ${cols} | ${isBase ? '基准' : verdict ?? '—'}`,
-      });
+      lines.push(`${isBase ? '⚑ ' : ''}${batchLabelOf(g.batchId)} | ${cols} | ${isBase ? '基准' : verdict ?? '—'}`);
     }
-    const overview = buildOverviewSummary(data);
-    if (overview) blocks.push({ kind: 'p', text: overview });
+    const overviewText = buildOverviewSummary(data);
+    if (overviewText) lines.push(overviewText);
+    blocks.push({ kind: 'overview', lines });
     blocks.push({ kind: 'chart' });
   }
 
@@ -177,7 +176,7 @@ function buildEmailBlocks(meta: ReportMetaInput, data: ReportData): EmailBlock[]
   return blocks;
 }
 
-/** 渲染纯文本正文（mailto 与剪贴板 text/plain；图表以附件说明代替） */
+/** 渲染纯文本正文（mailto 与剪贴板 text/plain；overview 回退矩阵文本行，图表以附件说明代替） */
 function renderEmailText(blocks: EmailBlock[]): string {
   const lines: string[] = [];
   for (const b of blocks) {
@@ -187,12 +186,14 @@ function renderEmailText(blocks: EmailBlock[]): string {
     } else if (b.kind === 'h2') {
       if (lines.length > 0 && lines[lines.length - 1] !== '') lines.push('');
       lines.push(b.text);
+    } else if (b.kind === 'overview') {
+      lines.push(...b.lines);
     } else {
       lines.push(b.text);
     }
   }
   if (lines.length > 0 && lines[lines.length - 1] !== '') lines.push('');
-  lines.push('（箱线图等图表内容见附件 Excel 报告，PDF 版可于系统内导出）');
+  lines.push('（以上为报告总览与分析结论；箱线图等图表内容见附件 Excel 报告，PDF 版可于系统内导出）');
   lines.push('本报告由器件验证数据分析系统生成');
   return lines.join('\n');
 }
@@ -205,8 +206,8 @@ function escapeHtml(s: string): string {
 /** 邮件正文字体（与报告导出一致：微软雅黑 / 方正雅黑） */
 const EMAIL_FONT_STACK = `'Microsoft YaHei','方正雅黑','PingFang SC',sans-serif`;
 
-/** 渲染 HTML 富文本正文：箱线图以 base64 PNG 内嵌（粘贴到飞书 / Gmail 等邮件客户端即带图） */
-function renderEmailHtml(blocks: EmailBlock[], charts: ChartImage[]): string {
+/** 渲染 HTML 富文本正文：报告总览块与箱线图以 base64 PNG 内嵌（粘贴到飞书 / Gmail 等邮件客户端即带图） */
+function renderEmailHtml(blocks: EmailBlock[], charts: ChartImage[], overview?: ChartImage): string {
   const parts: string[] = [];
   let chartIdx = 0;
   for (const b of blocks) {
@@ -223,6 +224,23 @@ function renderEmailHtml(blocks: EmailBlock[], charts: ChartImage[]): string {
       parts.push(
         `<p style="margin:4px 0;font-size:13px;line-height:1.7;color:#1e293b;white-space:pre-wrap;">${escapeHtml(b.text)}</p>`,
       );
+    } else if (b.kind === 'overview') {
+      if (overview) {
+        /* PDF 报告总览块截图（热力矩阵 + 汇总文字） */
+        parts.push(
+          `<div style="margin:12px 0 20px;">` +
+            `<img src="data:image/png;base64,${overview.base64}" width="${overview.width}" height="${overview.height}" ` +
+            `style="display:block;width:100%;max-width:${overview.width}px;height:auto;border:1px solid #e2e8f0;border-radius:8px;" />` +
+            `</div>`,
+        );
+      } else {
+        /* 截图不可用时回退矩阵文本行 */
+        for (const line of b.lines) {
+          parts.push(
+            `<p style="margin:4px 0;font-size:13px;line-height:1.7;color:#1e293b;white-space:pre-wrap;">${escapeHtml(line)}</p>`,
+          );
+        }
+      }
     } else {
       const c = charts[chartIdx++];
       if (!c) continue;
@@ -710,8 +728,8 @@ export default function ReportEditor() {
     setProgress('正在生成报告…');
     await new Promise((r) => setTimeout(r, 60));
     try {
-      // 生成 Excel（同时得到图表截图，供正文内嵌复用）并触发下载
-      const { blob, charts } = await exportReportExcelBlob(paperRef.current, meta, reportData, {
+      // 生成 Excel（同时得到总览块与图表截图，供正文内嵌复用）并触发下载
+      const { blob, charts, overview } = await exportReportExcelBlob(paperRef.current, meta, reportData, {
         onProgress: setProgress,
       });
       const filename = buildReportFileName(
@@ -731,12 +749,12 @@ export default function ReportEditor() {
       const text = renderEmailText(blocks);
       const subject = `器件分析报告 - ${reportData.groups.map((g) => g.batchId).join(' vs ')}`;
       let richCopied = false;
-      if (charts.length > 0) {
+      if (charts.length > 0 || overview) {
         try {
           if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
             await navigator.clipboard.write([
               new ClipboardItem({
-                'text/html': new Blob([renderEmailHtml(blocks, charts)], { type: 'text/html' }),
+                'text/html': new Blob([renderEmailHtml(blocks, charts, overview)], { type: 'text/html' }),
                 'text/plain': new Blob([text], { type: 'text/plain' }),
               }),
             ]);
