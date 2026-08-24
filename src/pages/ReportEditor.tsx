@@ -10,13 +10,10 @@ import {
   batchLabelOf,
   buildOverviewSummary,
   buildReportData,
-  buildSummaryGroups,
   criteriaText,
   criteriaTextShort,
   generateDiscussionDraft,
   isValidDevice,
-  metricValue,
-  scanLabelOf,
   type CriteriaThresholds,
   type ReportData,
 } from '../report/reportData';
@@ -115,21 +112,7 @@ function loadDefaultMeta(): ReportMetaInput {
   }
 }
 
-/* ================= 邮件正文（报告全文，文本 / HTML 双渲染） ================= */
-
-/** 差值文本：>0 带 + 号，保留两位小数 */
-function deltaStr(v: number): string {
-  return `${v > 0 ? '+' : ''}${fmt(v, 2)}`;
-}
-
-/** 单批次指标行（冠军 / 中位 / 最优共用格式） */
-function summaryRow(
-  label: string,
-  v: { eff: number; voc: number; jsc: number; ff: number; rs: number; rsh: number; vocff: number },
-  suffix = '',
-): string {
-  return `  ${label}${suffix}：PCE ${fmt(v.eff)}% | Voc ${fmt(v.voc)}V | Jsc ${fmt(v.jsc)}mA/cm² | FF ${fmt(v.ff)} | Rs ${fmt(v.rs)}Ω | Rsh ${fmt(v.rsh)}Ω | Voc·FF ${fmt(v.vocff)}V`;
-}
+/* ================= 邮件正文（报告总览 + 分析结论，文本 / HTML 双渲染） ================= */
 
 /** 邮件正文内容块：纯文本与 HTML 富文本共用同一内容序列；
  *  chart 块在 HTML 中渲染为内嵌箱线图图片（base64 PNG），纯文本中以附件说明代替 */
@@ -139,10 +122,9 @@ type EmailBlock =
   | { kind: 'p'; text: string }
   | { kind: 'chart' };
 
-/** 构建邮件正文内容块：与 PDF 报告正文一致（图表块位于「四、实验数据」引言之后） */
+/** 构建邮件正文内容块（精简版）：报告头关键信息 + 一、报告总览（含箱线图）+ 二、分析结论 */
 function buildEmailBlocks(meta: ReportMetaInput, data: ReportData): EmailBlock[] {
   const blocks: EmailBlock[] = [];
-  const hasText = (s: string | null | undefined) => !!s && !!s.trim();
 
   /* 报告头 */
   blocks.push({ kind: 'title', text: '钙钛矿器件验证对比分析报告' });
@@ -159,9 +141,9 @@ function buildEmailBlocks(meta: ReportMetaInput, data: ReportData): EmailBlock[]
     text: `有效测试记录：${data.totals.valid}/${data.totals.reverse}（符合口径反扫数 / 反扫总数）`,
   });
 
-  /* 报告总览 */
+  /* 一、报告总览（矩阵 + 汇总文字 + 箱线图） */
   if (data.groups.length > 0) {
-    blocks.push({ kind: 'h2', text: '【报告总览】' });
+    blocks.push({ kind: 'h2', text: '一、报告总览' });
     blocks.push({
       kind: 'p',
       text: '批次 | PCE冠军(%) | PCE中位(%) | Voc中位(V) | Jsc中位(mA/cm²) | FF | Voc·FF平均(V) | 判定',
@@ -184,85 +166,13 @@ function buildEmailBlocks(meta: ReportMetaInput, data: ReportData): EmailBlock[]
     }
     const overview = buildOverviewSummary(data);
     if (overview) blocks.push({ kind: 'p', text: overview });
-  }
-
-  /* 一 ~ 三：文字章节 */
-  if (hasText(meta.research_purpose)) {
-    blocks.push({ kind: 'h2', text: '一、研究目的与意义' });
-    blocks.push({ kind: 'p', text: meta.research_purpose!.trim() });
-  }
-  if (hasText(meta.process_method)) {
-    blocks.push({ kind: 'h2', text: '二、过程与方法' });
-    blocks.push({ kind: 'p', text: meta.process_method!.trim() });
-  }
-  if (hasText(meta.key_parameters)) {
-    blocks.push({ kind: 'h2', text: '三、关键工艺参数' });
-    blocks.push({ kind: 'p', text: meta.key_parameters!.trim() });
-  }
-
-  /* 四、实验数据（引言 → 箱线图 → 汇总表 → 差值 → 结论） */
-  if (data.groups.length > 0) {
-    blocks.push({ kind: 'h2', text: '四、实验数据' });
-    blocks.push({
-      kind: 'p',
-      text: `本节共 ${data.totals.samples} 条测试记录（其中反扫 ${data.totals.reverse} 条），全部统计均基于符合统计口径的有效测试记录 ${data.totals.valid} 条（口径：${criteriaTextShort(data.thresholds)}）。`,
-    });
     blocks.push({ kind: 'chart' });
-
-    /* 4.5 汇总表 */
-    const summaryGroups = buildSummaryGroups(data);
-    if (summaryGroups.length > 0) {
-      blocks.push({ kind: 'h2', text: '4.5 各批次关键参数汇总表（冠军 / 中位 / 最优）' });
-      for (const g of summaryGroups) {
-        blocks.push({ kind: 'p', text: `${batchLabelOf(g.batchId)}（有效 ${g.validCount}/${g.totalCount}）` });
-        if (g.champion) {
-          const c = g.champion;
-          blocks.push({
-            kind: 'p',
-            text: `  冠军（${scanLabelOf(c.sample_name, g.batchId)}）：PCE ${fmt(c.efficiency)}% | Voc ${fmt(c.voc_V)}V | Jsc ${fmt(c.jsc_mA_cm2)}mA/cm² | FF ${fmt(c.ff)} | Rs ${fmt(c.rs_ohm)}Ω | Rsh ${fmt(c.rsh_ohm)}Ω | Voc·FF ${fmt(metricValue(c, 'vocff'))}V`,
-          });
-        } else {
-          blocks.push({ kind: 'p', text: '  无 PCE 测试数据' });
-        }
-        blocks.push({ kind: 'p', text: summaryRow('中位', g.median) });
-        blocks.push({ kind: 'p', text: summaryRow('最优', g.best) });
-      }
-    }
-
-    /* 4.6 Baseline 差值对比 */
-    if (data.baseline && data.baseline.diffs.length > 0) {
-      blocks.push({ kind: 'h2', text: `4.6 Baseline 差值对比（基准：${data.baseline.baselineBatchId}）` });
-      blocks.push({
-        kind: 'p',
-        text: `⚑ ${data.baseline.baselineBatchId}（基准）：冠军 PCE ${fmt(data.baseline.baselineChampion)}% | 中位 PCE ${fmt(data.baseline.baselineMedian)}% | 平均 Voc·FF ${fmt(data.baseline.baselineVocffMean)}V`,
-      });
-      for (const d of data.baseline.diffs) {
-        blocks.push({
-          kind: 'p',
-          text: `${d.batchId}：冠军 PCE ${fmt(d.champion)}%（Δ${deltaStr(d.championDelta)}）| 中位 PCE ${fmt(d.median)}%（Δ${deltaStr(d.medianDelta)}）| 平均 Voc·FF ${fmt(d.vocffMean)}V（Δ${deltaStr(d.vocffMeanDelta ?? NaN)}）| 判定：${d.verdict}`,
-        });
-      }
-    }
-
-    /* 4.7 分析结论 */
-    if (data.baseline?.conclusion) {
-      blocks.push({ kind: 'h2', text: '4.7 分析结论（Baseline 自动判定）' });
-      blocks.push({ kind: 'p', text: data.baseline.conclusion });
-    }
   }
 
-  /* 五 ~ 七：文字章节 */
-  if (hasText(meta.discussion)) {
-    blocks.push({ kind: 'h2', text: '五、结果讨论' });
-    blocks.push({ kind: 'p', text: meta.discussion!.trim() });
-  }
-  if (hasText(meta.conclusion)) {
-    blocks.push({ kind: 'h2', text: '六、研究结论' });
-    blocks.push({ kind: 'p', text: meta.conclusion!.trim() });
-  }
-  if (hasText(meta.next_steps)) {
-    blocks.push({ kind: 'h2', text: '七、下一步计划' });
-    blocks.push({ kind: 'p', text: meta.next_steps!.trim() });
+  /* 二、分析结论（Baseline 自动判定） */
+  if (data.baseline?.conclusion) {
+    blocks.push({ kind: 'h2', text: '二、分析结论' });
+    blocks.push({ kind: 'p', text: data.baseline.conclusion });
   }
   return blocks;
 }
@@ -326,7 +236,7 @@ function renderEmailHtml(blocks: EmailBlock[], charts: ChartImage[]): string {
     }
   }
   parts.push(
-    `<p style="margin:20px 0 0;font-size:12px;color:#64748b;">（若您的邮件客户端未显示上图，请查看附件 Excel 报告；PDF 版可于系统内导出）</p>` +
+    `<p style="margin:20px 0 0;font-size:12px;color:#64748b;">（以上为报告总览与分析结论；完整报告（含各章节明细与图表）请查看附件 Excel，PDF 版可于系统内导出）</p>` +
       `<p style="margin:4px 0 0;font-size:12px;color:#94a3b8;">本报告由器件验证数据分析系统生成</p>`,
   );
   return `<div style="font-family:${EMAIL_FONT_STACK};max-width:760px;">${parts.join('')}</div>`;
@@ -816,7 +726,7 @@ export default function ReportEditor() {
       a.click();
       URL.revokeObjectURL(url);
 
-      // 正文：报告全文（图表内嵌）以富文本写入剪贴板，粘贴到邮件客户端即带图
+      // 正文：报告总览 + 分析结论（图表内嵌）以富文本写入剪贴板，粘贴到邮件客户端即带图
       const blocks = buildEmailBlocks(meta, reportData);
       const text = renderEmailText(blocks);
       const subject = `器件分析报告 - ${reportData.groups.map((g) => g.batchId).join(' vs ')}`;
