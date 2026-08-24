@@ -1,0 +1,13 @@
+{
+  "updatedAt": "2026-08-24T07:55:18.487Z",
+  "criteria": {
+    "verdictMode": "champion_and_median",
+    "verdictThreshold": 0,
+    "pceMin": 18,
+    "ffMin": 0.5,
+    "resistanceMin": 0
+  },
+  "mailRecipients": [
+    "xinxing.han@jingling-tech.com"
+  ]
+}
