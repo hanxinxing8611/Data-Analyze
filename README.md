@@ -13,6 +13,10 @@
   清除浏览器站点数据会删除已导入的数据，请定期「导出备份」
 - **共享协同**：「系统设置 → 数据库备份 → 拉取共享数据」可一键拉取维护者发布的权威数据集
   （发布方式见 `public/shared/README.md`）
+- **云端共享设置**：统计口径与默认收件人支持团队共享——打开页面自动拉取
+  `shared/settings.json`（全员生效，无需配置）；管理员在「系统设置 → 云端共享设置」
+  配置 GitHub Fine-grained PAT 后，保存设置即自动推送云端，其他工程师下次打开页面即生效。
+  无 PAT 时保存仅本机生效
 - **报告导出**：「报告生成」页选择批次与基准后导出，自动命名为
   `YYMMDD.汇报人-批次号vs批次号-器件分析报告.pdf/xlsx`
 
@@ -28,7 +32,7 @@
 ```bash
 npm install        # postinstall 在 Windows 本机自动处理 node_modules 解密
 npm run dev        # 开发服务器（地址带 /Data-Analyze/ 前缀）
-npm run build      # 构建门禁：类型检查 + 185 项数据断言 + 打包
+npm run build      # 构建门禁：类型检查 + 193 项数据断言 + 打包
 ```
 
 注意：`npm run build` 中的数据断言依赖 `data/input.txt`（真实数据，已按保密策略排除在仓库外），

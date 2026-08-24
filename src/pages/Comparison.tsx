@@ -295,7 +295,7 @@ export default function Comparison() {
             icon="chart"
             title="暂无可对比的数据"
             description="请先导入 TXT 源文件"
-            action={<Link to="/import"><Button>前往导入</Button></Link>}
+            action={<Link to="/data"><Button>前往导入</Button></Link>}
           />
         </Card>
       ) : (

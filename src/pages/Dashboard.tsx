@@ -28,7 +28,7 @@ export default function Dashboard() {
         description="器件验证数据概况与快捷入口"
         actions={
           <>
-            <Link to="/import">
+            <Link to="/data">
               <Button variant="secondary">导入数据</Button>
             </Link>
             <Link to="/comparison">
@@ -45,7 +45,7 @@ export default function Dashboard() {
             title="暂无数据"
             description="请先导入 IV 测试导出的 TXT 源文件，系统将自动解析样本参数、识别材料批次并入库"
             action={
-              <Link to="/import">
+              <Link to="/data">
                 <Button>
                   <span>前往导入</span>
                 </Button>

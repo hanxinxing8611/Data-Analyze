@@ -30,25 +30,32 @@ export const DEFAULT_THRESHOLDS: CriteriaThresholds = {
 /** localStorage 持久化键 */
 export const CRITERIA_STORAGE_KEY = 'dv-criteria-thresholds';
 
+/** 口径字段防御性校验（非法/缺失回退默认值），localStorage 与云端解析共用 */
+export function sanitizeThresholds(
+  parsed: Partial<CriteriaThresholds> | null | undefined,
+): CriteriaThresholds {
+  const num = (v: unknown) => (typeof v === 'number' && !isNaN(v) ? v : null);
+  const p = parsed ?? {};
+  return {
+    verdictMode: (
+      p.verdictMode === 'champion_only' ||
+      p.verdictMode === 'median_only'
+        ? p.verdictMode
+        : DEFAULT_THRESHOLDS.verdictMode
+    ),
+    verdictThreshold: num(p.verdictThreshold) ?? DEFAULT_THRESHOLDS.verdictThreshold,
+    pceMin: num(p.pceMin) ?? DEFAULT_THRESHOLDS.pceMin,
+    ffMin: num(p.ffMin) ?? DEFAULT_THRESHOLDS.ffMin,
+    resistanceMin: num(p.resistanceMin) ?? DEFAULT_THRESHOLDS.resistanceMin,
+  };
+}
+
 /** 从 localStorage 读取口径（非法/缺失时回退默认值） */
 export function loadThresholds(): CriteriaThresholds {
   try {
     const raw = localStorage.getItem(CRITERIA_STORAGE_KEY);
     if (!raw) return { ...DEFAULT_THRESHOLDS };
-    const parsed = JSON.parse(raw) as Partial<CriteriaThresholds>;
-    const num = (v: unknown) => (typeof v === 'number' && !isNaN(v) ? v : null);
-    return {
-      verdictMode: (
-        parsed.verdictMode === 'champion_only' ||
-        parsed.verdictMode === 'median_only'
-          ? parsed.verdictMode
-          : DEFAULT_THRESHOLDS.verdictMode
-      ),
-      verdictThreshold: num(parsed.verdictThreshold) ?? DEFAULT_THRESHOLDS.verdictThreshold,
-      pceMin: num(parsed.pceMin) ?? DEFAULT_THRESHOLDS.pceMin,
-      ffMin: num(parsed.ffMin) ?? DEFAULT_THRESHOLDS.ffMin,
-      resistanceMin: num(parsed.resistanceMin) ?? DEFAULT_THRESHOLDS.resistanceMin,
-    };
+    return sanitizeThresholds(JSON.parse(raw) as Partial<CriteriaThresholds>);
   } catch {
     return { ...DEFAULT_THRESHOLDS };
   }

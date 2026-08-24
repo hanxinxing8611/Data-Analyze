@@ -1591,6 +1591,62 @@ section('11. 导出文件自动命名（日期（YYMMDD）.汇报人-批次号vs
   );
 }
 
+/* ================= 12. 云端共享设置（纯函数） ================= */
+
+section('12. 云端共享设置解析（cloudSettings）');
+{
+  const { parseCloudSettings } = await import('../src/utils/cloudSettings');
+  const { sanitizeThresholds } = await import('../src/report/reportData');
+
+  // 完整 JSON：两字段均解析
+  const full = parseCloudSettings(
+    JSON.stringify({
+      criteria: { verdictMode: 'champion_only', verdictThreshold: 0.5, pceMin: 16, ffMin: 0.55, resistanceMin: 10 },
+      mailRecipients: ['a@x.com', ' b@y.com ', 42, ''],
+      updatedAt: '2026-08-24T00:00:00Z',
+    }),
+  );
+  check(
+    '完整 JSON 解析：口径 + 收件人均读出',
+    full !== null &&
+      full.criteria?.verdictMode === 'champion_only' &&
+      full.criteria.pceMin === 16 &&
+      full.mailRecipients?.length === 2 &&
+      full.mailRecipients[1] === 'b@y.com' &&
+      full.updatedAt === '2026-08-24T00:00:00Z',
+    JSON.stringify(full),
+  );
+
+  // 仅口径：收件人为 undefined（不共享语义，拉取时不覆盖本地）
+  const onlyCriteria = parseCloudSettings(JSON.stringify({ criteria: { pceMin: 17 } }));
+  check(
+    '仅含口径时收件人为 undefined（不覆盖本地收件人）',
+    onlyCriteria?.criteria?.pceMin === 17 && onlyCriteria.mailRecipients === undefined,
+    JSON.stringify(onlyCriteria),
+  );
+
+  // 共享空收件人列表（[] 语义 = 清空本地）
+  const emptyList = parseCloudSettings(JSON.stringify({ mailRecipients: [] }));
+  check('空收件人数组解析为 []（清空语义）', Array.isArray(emptyList?.mailRecipients) && emptyList.mailRecipients.length === 0, JSON.stringify(emptyList));
+
+  // 非法输入返回 null
+  check('非法 JSON 返回 null', parseCloudSettings('{oops') === null);
+  check('空字符串返回 null', parseCloudSettings('') === null);
+  check('非对象 JSON（数组）返回 null', parseCloudSettings('[1,2]') === null);
+
+  // 口径字段非法值回退默认（sanitizeThresholds）
+  const bad = sanitizeThresholds({ verdictMode: 'hack', verdictThreshold: 'x' as unknown as number, pceMin: NaN });
+  check(
+    '口径非法字段回退默认值',
+    bad.verdictMode === 'champion_and_median' && bad.verdictThreshold === 0 && bad.pceMin === 15 && bad.ffMin === 0.5 && bad.resistanceMin === 0,
+    JSON.stringify(bad),
+  );
+
+  // 推送组装函数已导出（内部依赖 localStorage，运行时行为由浏览器侧覆盖）
+  const { collectCloudPayload } = await import('../src/utils/cloudSettings');
+  check('collectCloudPayload 已导出（共享开关裁剪由浏览器侧覆盖）', typeof collectCloudPayload === 'function');
+}
+
 /* ================= 汇总 ================= */
 
 section('验证汇总');

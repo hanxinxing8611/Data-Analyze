@@ -898,6 +898,26 @@ export async function exportReportExcel(
   data: ReportData,
   options: { onProgress?: (msg: string) => void } = {},
 ): Promise<void> {
+  const blob = await exportReportExcelBlob(paperEl, meta, data, options);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = buildReportFileName(
+    meta,
+    data.groups.map((g) => g.batchId),
+    'xlsx',
+  );
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** 导出 Excel 为 Blob（不触发下载，供邮件发送等场景复用） */
+export async function exportReportExcelBlob(
+  paperEl: HTMLElement,
+  meta: ReportMetaInput,
+  data: ReportData,
+  options: { onProgress?: (msg: string) => void } = {},
+): Promise<Blob> {
   options.onProgress?.('正在渲染报告图表…');
   const paper = await capturePaper(paperEl);
   const blocks = extractBlocks(paper, paperEl);
@@ -924,19 +944,9 @@ export async function exportReportExcel(
   options.onProgress?.('正在生成 Excel 文件…');
   const wb = buildReportWorkbook(meta, data, charts);
   const buffer = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buffer], {
+  return new Blob([buffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = buildReportFileName(
-    meta,
-    data.groups.map((g) => g.batchId),
-    'xlsx',
-  );
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 /* ================= 统一入口 ================= */

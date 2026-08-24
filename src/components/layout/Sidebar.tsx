@@ -4,8 +4,7 @@ import { useData } from '../../store/DataContext';
 
 const NAV_ITEMS = [
   { to: '/', label: '数据总览', icon: 'dashboard', end: true },
-  { to: '/import', label: '数据导入', icon: 'upload', end: false },
-  { to: '/browser', label: '数据管理', icon: 'database', end: false },
+  { to: '/data', label: '数据管理', icon: 'database', end: false },
   { to: '/comparison', label: '对比分析', icon: 'chart', end: false },
   { to: '/report', label: '报告生成', icon: 'file', end: false },
   { to: '/settings', label: '系统设置', icon: 'settings', end: false },

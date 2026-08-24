@@ -4,8 +4,7 @@ import { CriteriaProvider } from './store/CriteriaContext';
 import { SelectionProvider } from './store/SelectionContext';
 import AppLayout from './components/layout/AppLayout';
 import Dashboard from './pages/Dashboard';
-import DataImport from './pages/DataImport';
-import DataBrowser from './pages/DataBrowser';
+import DataManagement from './pages/DataManagement';
 import Comparison from './pages/Comparison';
 import ReportEditor from './pages/ReportEditor';
 import Settings from './pages/Settings';
@@ -19,8 +18,9 @@ export default function App() {
             <Routes>
               <Route element={<AppLayout />}>
                 <Route path="/" element={<Dashboard />} />
-                <Route path="/import" element={<DataImport />} />
-                <Route path="/browser" element={<DataBrowser />} />
+                <Route path="/data" element={<DataManagement />} />
+                <Route path="/import" element={<Navigate to="/data" replace />} />
+                <Route path="/browser" element={<Navigate to="/data" replace />} />
                 <Route path="/comparison" element={<Comparison />} />
                 <Route path="/report" element={<ReportEditor />} />
                 <Route path="/settings" element={<Settings />} />

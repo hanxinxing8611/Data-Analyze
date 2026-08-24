@@ -10,6 +10,21 @@ import {
   criteriaText,
   type CriteriaThresholds,
 } from '../report/reportData';
+import {
+  isValidEmail,
+  loadMailRecipients,
+  saveMailRecipients,
+} from '../utils/mailRecipients';
+import {
+  applyCloudSettings,
+  fetchCloudSettings,
+  loadCloudConfig,
+  loadCloudSyncInfo,
+  saveCloudConfig,
+  syncSettingsToCloud,
+  type CloudConfig,
+  type CloudSyncInfo,
+} from '../utils/cloudSettings';
 
 /** 系统设置访问密码（防误改，非安全加密） */
 const SETTINGS_PASSWORD = '000000';
@@ -124,6 +139,17 @@ function CriteriaForm() {
     () => emptyField(thresholds.resistanceMin),
   );
   const [saved, setSaved] = useState(false);
+  /** 云端同步结果提示（保存后显示） */
+  const [cloudMsg, setCloudMsg] = useState('');
+
+  /** 外部更新（云端拉取应用）时同步表单显示 */
+  useEffect(() => {
+    setVerdictMode(thresholds.verdictMode);
+    setVerdictTh(emptyField(thresholds.verdictThreshold));
+    setPceMin(emptyField(thresholds.pceMin));
+    setFfMin(emptyField(thresholds.ffMin));
+    setResistanceMin(emptyField(thresholds.resistanceMin));
+  }, [thresholds]);
 
   const dirty =
     verdictMode !== thresholds.verdictMode ||
@@ -165,6 +191,22 @@ function CriteriaForm() {
     setResistanceMin(emptyField(next.resistanceMin));
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
+
+    // 已配置云端共享时推送（收件人按共享开关一并打包）
+    const cfg = loadCloudConfig();
+    if (cfg.token) {
+      setCloudMsg('正在同步云端…');
+      void syncSettingsToCloud().then((r) => {
+        if (r.ok) {
+          setCloudMsg('已同步云端，其他工程师下次打开页面即生效');
+        } else if (r.message === 'nothing') {
+          setCloudMsg('已保存（本机）——云端共享未勾选任何项目');
+        } else {
+          setCloudMsg(`已保存（本机），云端同步失败：${r.message}`);
+        }
+        setTimeout(() => setCloudMsg(''), 6000);
+      });
+    }
   };
 
   const handleReset = () => {
@@ -296,16 +338,23 @@ function CriteriaForm() {
         </div>
 
         <div className="flex items-center justify-between border-t border-slate-100 pt-4">
-          <p className="text-xs text-slate-400">
-            {saved ? (
-              <span className="text-emerald-600">已保存，报告页与导出将使用新口径</span>
-            ) : dirty ? (
-              <span className="text-amber-600">有未保存的修改</span>
-            ) : (
-              '配置持久化于本浏览器，默认：PCE≥15%、FF≥0.5、Rs/Rsh>0Ω，冠军 Δ>0 且 中位 Δ>0'
+          <div className="min-w-0">
+            <p className="text-xs text-slate-400">
+              {saved ? (
+                <span className="text-emerald-600">已保存，报告页与导出将使用新口径</span>
+              ) : dirty ? (
+                <span className="text-amber-600">有未保存的修改</span>
+              ) : (
+                '配置持久化于本浏览器，默认：PCE≥15%、FF≥0.5、Rs/Rsh>0Ω，冠军 Δ>0 且 中位 Δ>0'
+              )}
+            </p>
+            {cloudMsg && (
+              <p className={`mt-0.5 text-xs ${cloudMsg.includes('失败') ? 'text-red-500' : 'text-blue-600'}`}>
+                {cloudMsg}
+              </p>
             )}
-          </p>
-          <div className="flex items-center gap-3">
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
             <Button variant="secondary" onClick={handleReset}>
               恢复默认
             </Button>
@@ -438,6 +487,354 @@ function BackupCard() {
   );
 }
 
+/* ================= 默认收件人管理 ================= */
+
+function MailRecipientsCard() {
+  const [list, setList] = useState<string[]>(() => loadMailRecipients());
+  const [input, setInput] = useState('');
+  const [error, setError] = useState('');
+  const [cloudMsg, setCloudMsg] = useState('');
+
+  /** 变更后立即持久化；已配置云端共享时同步推送（收件人按共享开关，口径一并打包） */
+  const persist = (next: string[]) => {
+    setList(next);
+    saveMailRecipients(next);
+    const cfg = loadCloudConfig();
+    if (cfg.token) {
+      setCloudMsg('正在同步云端…');
+      void syncSettingsToCloud().then((r) => {
+        setCloudMsg(
+          r.ok
+            ? '已同步云端，其他工程师下次打开页面即生效'
+            : r.message === 'nothing'
+              ? '已保存（本机）——云端共享未勾选收件人'
+              : `已保存（本机），云端同步失败：${r.message}`,
+        );
+        setTimeout(() => setCloudMsg(''), 6000);
+      });
+    }
+  };
+
+  const add = (e: FormEvent) => {
+    e.preventDefault();
+    const email = input.trim();
+    if (!email) return;
+    if (!isValidEmail(email)) {
+      setError('邮箱格式不正确');
+      return;
+    }
+    if (list.some((v) => v.toLowerCase() === email.toLowerCase())) {
+      setError('该邮箱已存在');
+      return;
+    }
+    persist([...list, email]);
+    setInput('');
+    setError('');
+  };
+
+  const remove = (email: string) => {
+    persist(list.filter((v) => v !== email));
+  };
+
+  return (
+    <Card title="默认收件人">
+      <div className="space-y-3 text-sm text-slate-600">
+        <p>
+          「报告生成」页点击「发送邮件」时，以下邮箱将自动填入收件人（可在写信窗口中增删）：
+        </p>
+
+        {/* 收件人列表 */}
+        {list.length > 0 ? (
+          <ul className="space-y-2">
+            {list.map((email) => (
+              <li
+                key={email}
+                className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2"
+              >
+                <span className="break-all font-mono text-[13px] text-slate-700">{email}</span>
+                <button
+                  type="button"
+                  onClick={() => remove(email)}
+                  className="ml-3 shrink-0 rounded-md p-1 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
+                  title="删除该收件人"
+                >
+                  <Icon name="trash" className="h-4 w-4" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="rounded-lg border border-dashed border-slate-300 px-3 py-3 text-center text-[13px] text-slate-400">
+            暂无默认收件人，发送时需在写信窗口中手动填写
+          </p>
+        )}
+
+        {/* 添加表单 */}
+        <form onSubmit={add} className="flex gap-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              setError('');
+            }}
+            placeholder="输入邮箱地址，如 name@example.com"
+            className={`min-w-0 flex-1 rounded-lg border px-3 py-2 font-mono text-[13px] outline-none transition-colors ${
+              error ? 'border-red-300 bg-red-50 focus:border-red-400' : 'border-slate-300 focus:border-blue-500'
+            }`}
+          />
+          <Button variant="secondary" type="submit">
+            添加
+          </Button>
+        </form>
+        {error && <p className="text-xs text-red-500">{error}</p>}
+        {cloudMsg && (
+          <p className={`text-xs ${cloudMsg.includes('失败') ? 'text-red-500' : 'text-blue-600'}`}>
+            {cloudMsg}
+          </p>
+        )}
+
+        <p className="text-xs text-slate-400">
+          收件人保存在本机浏览器中，仅影响「发送邮件」的默认收件人列表，可随时增删；
+          配置云端共享后将随「保存口径 / 增删收件人」同步到云端（见下方「云端共享设置」）。
+        </p>
+      </div>
+    </Card>
+  );
+}
+
+/* ================= 云端共享设置 ================= */
+
+function CloudSyncCard() {
+  const { saveThresholds } = useCriteria();
+  const [cfg, setCfg] = useState<CloudConfig>(() => loadCloudConfig());
+  const [tokenInput, setTokenInput] = useState('');
+  const [syncInfo, setSyncInfo] = useState<CloudSyncInfo | null>(() => loadCloudSyncInfo());
+  const [busy, setBusy] = useState<'pull' | 'push' | null>(null);
+  const [msg, setMsg] = useState<{ tone: 'success' | 'error' | 'info'; text: string } | null>(null);
+
+  const fieldCls =
+    'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition-colors focus:border-blue-500';
+
+  const saveCfg = (next: Partial<CloudConfig>) => {
+    const merged = { ...cfg, ...next };
+    setCfg(merged);
+    saveCloudConfig(merged);
+  };
+
+  /** 保存 PAT（输入后点击，仅存本机） */
+  const saveToken = () => {
+    const t = tokenInput.trim();
+    if (!t) {
+      setMsg({ tone: 'error', text: '请先粘贴 Token' });
+      return;
+    }
+    saveCfg({ token: t });
+    setTokenInput('');
+    setMsg({ tone: 'success', text: 'Token 已保存（仅存本机浏览器，不进代码与仓库）' });
+  };
+
+  const clearToken = () => {
+    saveCfg({ token: '' });
+    setMsg({ tone: 'info', text: 'Token 已清除，保存设置仅本机生效' });
+  };
+
+  /** 立即拉取云端设置并应用（成功后刷新页面以同步各表单显示） */
+  const handlePull = async () => {
+    setBusy('pull');
+    setMsg(null);
+    try {
+      const cloud = await fetchCloudSettings();
+      if (!cloud) {
+        setMsg({ tone: 'error', text: '云端暂无共享设置（shared/settings.json 不存在或网络失败）' });
+        return;
+      }
+      const applied = applyCloudSettings(cloud);
+      if (cloud.criteria) saveThresholds(cloud.criteria);
+      setSyncInfo(loadCloudSyncInfo());
+      const parts: string[] = [];
+      if (applied.criteria) parts.push('统计口径');
+      if (applied.recipients) parts.push('默认收件人');
+      setMsg({
+        tone: 'success',
+        text: `已应用云端设置（${parts.join('、') || '无共享项'}），页面即将刷新…`,
+      });
+      setTimeout(() => window.location.reload(), 900);
+    } catch (e) {
+      setMsg({ tone: 'error', text: `拉取失败：${e instanceof Error ? e.message : String(e)}` });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** 手动推送当前设置到云端 */
+  const handlePush = async () => {
+    setBusy('push');
+    setMsg(null);
+    try {
+      const r = await syncSettingsToCloud();
+      if (r.ok) {
+        setMsg({ tone: 'success', text: '已推送云端，其他工程师下次打开页面即生效' });
+      } else if (r.message === 'not-configured') {
+        setMsg({ tone: 'error', text: '尚未配置 Token，请先在上方粘贴并保存' });
+      } else if (r.message === 'nothing') {
+        setMsg({ tone: 'error', text: '未勾选任何共享项目，无可推送内容' });
+      } else {
+        setMsg({ tone: 'error', text: `推送失败：${r.message}` });
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const fmtTime = (iso?: string) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? iso : d.toLocaleString('zh-CN', { hour12: false });
+  };
+
+  return (
+    <Card title="云端共享设置">
+      <div className="space-y-4 text-sm text-slate-600">
+        <p>
+          保存统计口径 / 收件人时自动<b className="text-slate-800">同步到 GitHub 仓库</b>
+          （shared/settings.json），其他工程师打开页面时自动拉取，全团队口径一致。
+          无 Token 时保存仅本机生效。
+        </p>
+
+        {/* 仓库与 Token 配置 */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">GitHub 用户名</label>
+            <input
+              type="text"
+              value={cfg.owner}
+              onChange={(e) => saveCfg({ owner: e.target.value.trim() })}
+              className={`${fieldCls} font-mono`}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">仓库名</label>
+            <input
+              type="text"
+              value={cfg.repo}
+              onChange={(e) => saveCfg({ repo: e.target.value.trim() })}
+              className={`${fieldCls} font-mono`}
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500">
+            Personal Access Token（管理员配置，仅存本机）
+            {cfg.token && <span className="ml-2 text-emerald-600">● 已配置</span>}
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+              placeholder={cfg.token ? '已保存（粘贴新 Token 可替换）' : 'ghp_ / github_pat_ 开头'}
+              className={`${fieldCls} font-mono text-[13px]`}
+              autoComplete="off"
+            />
+            <div className="flex shrink-0 gap-2">
+              <Button variant="secondary" onClick={saveToken}>
+                保存
+              </Button>
+              {cfg.token && (
+                <Button variant="secondary" onClick={clearToken}>
+                  清除
+                </Button>
+              )}
+            </div>
+          </div>
+          <p className="mt-1.5 text-[11px] leading-4 text-slate-400">
+            生成：GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token；
+            Repository access 选 {cfg.owner}/{cfg.repo}；Permissions → Contents 设为 Read and write。
+            注意：推送内容将随公开仓库对外可见。
+          </p>
+        </div>
+
+        {/* 共享范围 */}
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+          <span className="text-xs font-medium text-slate-500">共享范围：</span>
+          <label className="flex items-center gap-1.5 text-[13px]">
+            <input
+              type="checkbox"
+              checked={cfg.shareCriteria}
+              onChange={(e) => saveCfg({ shareCriteria: e.target.checked })}
+              className="rounded text-blue-600"
+            />
+            统计口径
+          </label>
+          <label className="flex items-center gap-1.5 text-[13px]">
+            <input
+              type="checkbox"
+              checked={cfg.shareRecipients}
+              onChange={(e) => saveCfg({ shareRecipients: e.target.checked })}
+              className="rounded text-blue-600"
+            />
+            默认收件人
+          </label>
+        </div>
+
+        {/* 同步状态与操作 */}
+        <div className="rounded-lg border border-slate-100 bg-slate-50/60 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-xs text-slate-500">
+              <p>
+                最近拉取：
+                {syncInfo ? (
+                  <>
+                    {fmtTime(syncInfo.fetchedAt)}
+                    <span className="ml-2 rounded bg-slate-200/70 px-1.5 py-0.5 text-[10px]">
+                      {syncInfo.source === 'api' ? '仓库实时' : '部署产物'}
+                    </span>
+                    {syncInfo.cloudUpdatedAt && (
+                      <span className="ml-2">云端更新于 {fmtTime(syncInfo.cloudUpdatedAt)}</span>
+                    )}
+                  </>
+                ) : (
+                  '尚未拉取（页面打开时自动进行）'
+                )}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={handlePull} disabled={busy !== null}>
+                {busy === 'pull' ? '拉取中…' : '立即拉取云端设置'}
+              </Button>
+              <Button onClick={handlePush} disabled={busy !== null}>
+                {busy === 'push' ? '推送中…' : '推送当前设置到云端'}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {msg && (
+          <p
+            className={`text-xs ${
+              msg.tone === 'success'
+                ? 'text-emerald-600'
+                : msg.tone === 'error'
+                  ? 'text-red-500'
+                  : 'text-blue-600'
+            }`}
+          >
+            {msg.text}
+          </p>
+        )}
+
+        <p className="text-xs leading-5 text-slate-400">
+          说明：拉取在每次打开页面时自动进行（云端值优先）；「推送」提交到仓库 main
+          分支并触发自动部署。多人同时推送时自动处理冲突重试。Token 是 GitHub
+          个人令牌，只在本机浏览器存储，请勿外传。
+        </p>
+      </div>
+    </Card>
+  );
+}
+
 /* ================= 设置页主体 ================= */
 
 export default function Settings() {
@@ -480,6 +877,55 @@ export default function Settings() {
         <CriteriaForm />
 
         <BackupCard />
+
+        <MailRecipientsCard />
+
+        <CloudSyncCard />
+
+        <Card title="邮件发送设置">
+          <div className="space-y-3 text-sm text-slate-600">
+            <p>
+              「报告生成」页的「发送邮件」按钮通过系统默认邮件程序（mailto 协议）打开写信窗口。
+              如需使用<b className="text-slate-800">飞书邮箱</b>发送，需先完成以下一次性配置：
+            </p>
+            <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3.5">
+              <p className="text-[13px] font-medium text-slate-700">Windows（推荐：一键脚本）</p>
+              <p className="mt-1 text-[13px] leading-6">
+                下载
+                <a
+                  href={`${import.meta.env.BASE_URL}tools/set-feishu-mailto.ps1`}
+                  download="set-feishu-mailto.ps1"
+                  className="mx-1 font-medium text-blue-600 underline decoration-blue-300 underline-offset-2 hover:text-blue-700"
+                >
+                  set-feishu-mailto.ps1
+                </a>
+                ，右键 →「使用 PowerShell 运行」。脚本会自动定位飞书、注册 mailto
+                协议关联并打开测试邮件（若浏览器未生效，重启浏览器后重试）。
+              </p>
+            </div>
+            <ul className="space-y-1.5 text-[13px]">
+              <li>
+                <b className="text-slate-700">Windows（手动方式）</b>：删除注册表键
+                <code className="mx-0.5 rounded bg-slate-100 px-1 py-0.5 text-xs">
+                  HKCU\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\mailto\UserChoice
+                </code>
+                ，再在
+                <code className="mx-0.5 rounded bg-slate-100 px-1 py-0.5 text-xs">HKCU\Software\Classes\mailto\shell\open\command</code>
+                中将默认值设为
+                <code className="mx-0.5 rounded bg-slate-100 px-1 py-0.5 text-xs">"飞书路径\Feishu.exe" -- --open-url="%1"</code>
+              </li>
+              <li>
+                <b className="text-slate-700">Mac</b>：邮件 App → 设置 → 通用 → 默认电子邮件阅读程序 → 选择
+                <b className="text-slate-700">飞书</b>
+              </li>
+            </ul>
+            <p className="text-xs text-slate-400">
+              注：Windows 设置页的「电子邮箱」列表通常不含飞书（飞书未按系统邮件应用注册），
+              请使用上述脚本或手动方式。配置后点击「发送邮件」将直接打开飞书写信界面，
+              报告主题与摘要正文自动填充；Excel 报告已同时下载，拖入写信窗口的附件区即可发送。
+            </p>
+          </div>
+        </Card>
 
         <Card title="数据存储">
           <div className="space-y-3 text-sm text-slate-600">

@@ -12,7 +12,9 @@ import {
   generateDiscussionDraft,
   isValidDevice,
 } from '../report/reportData';
-import { exportReportExcel, exportReportPdf } from '../report/exporters';
+import { fmt } from '../utils/statistics';
+import { loadMailRecipients } from '../utils/mailRecipients';
+import { exportReportExcel, exportReportExcelBlob, exportReportPdf, buildReportFileName } from '../report/exporters';
 import type { BatchSummary, ReportMetaInput, ReportMetadata, SampleRecord } from '../types';
 
 /* ================= 表单字段定义 ================= */
@@ -118,6 +120,7 @@ export default function ReportEditor() {
   const [meta, setMeta] = useState<ReportMetaInput>(() => loadDefaultMeta());
   const [templates, setTemplates] = useState<ReportMetadata[]>([]);
   const [exporting, setExporting] = useState<'pdf' | 'excel' | null>(null);
+  const [emailing, setEmailing] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
   const [savedTip, setSavedTip] = useState('');
@@ -291,6 +294,100 @@ export default function ReportEditor() {
       setError(`导出失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setExporting(null);
+      setProgress('');
+    }
+  };
+
+  /** 一键发送邮件：生成 Excel 附件 → 自动下载 → 打开默认邮件客户端
+   *  邮件正文为报告摘要文本（与 PDF 报告总览/结论一致），
+   *  用户需手动将已下载的 Excel 文件粘贴到邮件附件中。 */
+  const handleSendEmail = async () => {
+    if (!paperRef.current) return;
+    if (reportData.totals.valid === 0) {
+      setError('请至少选择一个包含有效测试记录的批次后再发送');
+      return;
+    }
+    setError('');
+    setEmailing(true);
+    setProgress('正在生成报告…');
+    await new Promise((r) => setTimeout(r, 60));
+    try {
+      // 生成 Excel 并触发下载
+      const blob = await exportReportExcelBlob(paperRef.current, meta, reportData, {
+        onProgress: setProgress,
+      });
+      const filename = buildReportFileName(
+        meta,
+        reportData.groups.map((g) => g.batchId),
+        'xlsx',
+      );
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      // 构建邮件正文（文本摘要）
+      const lines: string[] = [];
+      lines.push('钙钛矿器件验证对比分析报告');
+      lines.push('');
+      lines.push(`汇报人：${meta.reporter?.trim() || '—'}`);
+      lines.push(`汇报日期：${meta.report_date || '—'}`);
+      lines.push(`参与批次：${reportData.groups.map((g) => g.batchId).join('、')}`);
+      if (reportData.baseline) {
+        lines.push(`基准批次：${reportData.baseline.baselineBatchId}`);
+      }
+      lines.push(`测试记录：${reportData.totals.samples} 条（反扫 ${reportData.totals.reverse} 条）`);
+      lines.push(`有效测试记录：${reportData.totals.valid}/${reportData.totals.reverse}`);
+      lines.push('');
+
+      // 各批次关键指标
+      lines.push('【批次关键指标】');
+      for (const g of reportData.groups) {
+        const isBase = g.batchId === reportData.baseline?.baselineBatchId;
+        const prefix = isBase ? '⚑ ' : '  ';
+        const champEff = g.champion?.efficiency ?? 0;
+        const medianEff = reportData.metricStats['efficiency']?.[g.batchId]?.median ?? NaN;
+        const vocffMean = reportData.metricStats['vocff']?.[g.batchId]?.mean ?? NaN;
+        lines.push(`${prefix}${g.batchId}：冠军 PCE ${fmt(champEff)}% | 中位 PCE ${fmt(medianEff)}% | 平均 Voc·FF ${fmt(vocffMean)}`);
+      }
+      lines.push('');
+
+      // 判定结论
+      if (reportData.baseline && reportData.baseline.diffs.length > 0) {
+        const excellent = reportData.baseline.diffs.filter((d) => d.verdict === '优秀');
+        const failed = reportData.baseline.diffs.filter((d) => d.verdict !== '优秀');
+        const verdictClauses: string[] = [];
+        if (excellent.length > 0) {
+          verdictClauses.push(`优秀 ${excellent.length} 个（${excellent.map((d) => d.batchId).join('、')}）`);
+        }
+        if (failed.length > 0) {
+          verdictClauses.push(`不合格 ${failed.length} 个（${failed.map((d) => d.batchId).join('、')}）`);
+        }
+        lines.push(`【判定结论】以 ${reportData.baseline.baselineBatchId} 为基准的 ${reportData.baseline.diffs.length} 个对比批次中：${verdictClauses.join('，')}。`);
+      }
+      lines.push('');
+      lines.push('（Excel 附件为完整分析报告，PDF 版可于系统内导出）');
+      lines.push('本报告由器件验证数据分析系统生成');
+
+      const subject = `器件分析报告 - ${reportData.groups.map((g) => g.batchId).join(' vs ')}`;
+      const body = encodeURIComponent(lines.join('\n'));
+      // 默认收件人：系统设置中增删，发送前可在飞书写信窗口中修改
+      const recipients = loadMailRecipients().join(',');
+      const mailto = `mailto:${recipients}?subject=${encodeURIComponent(subject)}&body=${body}`;
+
+      // 打开邮件客户端
+      window.open(mailto, '_blank');
+
+      setProgress('Excel 已下载，请在邮件客户端中粘贴为附件');
+      setTimeout(() => {
+        setProgress('');
+        setEmailing(false);
+      }, 3000);
+    } catch (e) {
+      setError(`发送失败：${e instanceof Error ? e.message : String(e)}`);
+      setEmailing(false);
       setProgress('');
     }
   };
@@ -549,7 +646,7 @@ export default function ReportEditor() {
             icon="file"
             title="暂无数据，无法生成报告"
             description="请先导入 TXT 源文件"
-            action={<Link to="/import"><Button>前往导入</Button></Link>}
+            action={<Link to="/data"><Button>前往导入</Button></Link>}
           />
         </Card>
       </div>
@@ -563,7 +660,7 @@ export default function ReportEditor() {
         description={`口径：${criteriaTextShort(thresholds)}；支持导出 PDF / Excel`}
         actions={
           <>
-            {(exporting || error) && (
+            {(exporting || emailing || error) && (
               <span className={`text-xs ${error ? 'text-red-600' : 'text-slate-500'}`}>
                 {error || progress}
               </span>
@@ -571,12 +668,19 @@ export default function ReportEditor() {
             <Button
               variant="secondary"
               onClick={() => handleExport('excel')}
-              disabled={exporting !== null}
+              disabled={exporting !== null || emailing}
             >
               {exporting === 'excel' ? '导出中…' : '导出 Excel'}
             </Button>
-            <Button onClick={() => handleExport('pdf')} disabled={exporting !== null}>
+            <Button onClick={() => handleExport('pdf')} disabled={exporting !== null || emailing}>
               {exporting === 'pdf' ? '导出中…' : '导出 PDF'}
+            </Button>
+            <Button
+              onClick={handleSendEmail}
+              disabled={exporting !== null || emailing}
+              variant="secondary"
+            >
+              {emailing ? '发送中…' : '发送邮件'}
             </Button>
           </>
         }
