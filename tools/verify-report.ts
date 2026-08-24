@@ -24,8 +24,10 @@ import {
   CRITERIA_TEXT,
   DEFAULT_THRESHOLDS,
   generateDiscussionDraft,
+  getVerdict,
   isValidDevice,
   metricValue,
+  sanitizeThresholds,
   scanLabelOf,
   verdictLabelOf,
   type SummaryGroup,
@@ -224,8 +226,9 @@ check('总数统计一致（全部记录 / 反扫 / 有效）', reportData.total
 section('3.5 口径可配置性（自定义阈值实时重算）');
 
 const strict = {
-  verdictMode: 'median_only' as const,
-  verdictThreshold: 0.5,
+  championRule: { enabled: false, threshold: 0 },
+  medianRule: { enabled: true, threshold: 0.5 },
+  vocffRule: { enabled: false, threshold: 0 },
   pceMin: 17,
   ffMin: 0.6,
   resistanceMin: 100,
@@ -241,12 +244,13 @@ const strictExpected = records.filter(
 console.log(`  自定义口径：${strictText}`);
 console.log(`  有效测试记录：默认口径 ${reportData.totals.valid} 条 → 自定义口径 ${strictData.totals.valid} 条（独立计数 ${strictExpected.length}）`);
 check(
-  '口径文字随配置动态生成（判定方式 + 有效性阈值）',
-  strictText.includes('中位 Δ>0（Δ>0.5）') && strictText.includes('PCE≥17%') && strictText.includes('FF≥0.6') && strictText.includes('Rs/Rsh>100Ω') && criteriaText(DEFAULT_THRESHOLDS).includes('冠军 Δ>0 且 中位 Δ>0'),
+  '口径文字随配置动态生成（判定规则 + 有效性阈值）',
+  strictText.includes('PCE中位 Δ≥0.5') && strictText.includes('PCE≥17%') && strictText.includes('FF≥0.6') && strictText.includes('Rs/Rsh>100Ω') && criteriaText(DEFAULT_THRESHOLDS).includes('PCE冠军 Δ≥0 且 PCE中位 Δ≥0'),
 );
 check(
   'ReportData 携带口径配置与口径文字',
-  strictData.thresholds.verdictMode === 'median_only' && strictData.thresholds.verdictThreshold === 0.5 &&
+  strictData.thresholds.medianRule.enabled === true && strictData.thresholds.medianRule.threshold === 0.5 &&
+    strictData.thresholds.championRule.enabled === false &&
     strictData.thresholds.pceMin === 17 && strictData.thresholds.ffMin === 0.6 && strictData.thresholds.resistanceMin === 100 &&
     strictData.criteriaText === strictText,
 );
@@ -269,10 +273,50 @@ check(
   reportData.criteriaText === CRITERIA_TEXT && reportData.totals.valid === validRecords.length,
 );
 check(
-  'verdictLabelOf 随判定配置动态生成（默认/仅冠军/仅中位 + 阈值后缀）',
-  verdictLabelOf(DEFAULT_THRESHOLDS) === '冠军 Δ>0 且 中位 Δ>0' &&
-    verdictLabelOf({ ...DEFAULT_THRESHOLDS, verdictMode: 'champion_only' }) === '冠军 Δ>0' &&
-    verdictLabelOf(strict) === '中位 Δ>0（Δ>0.5）',
+  'verdictLabelOf 随判定规则动态生成（默认/单选/多选 + 各自阈值）',
+  verdictLabelOf(DEFAULT_THRESHOLDS) === 'PCE冠军 Δ≥0 且 PCE中位 Δ≥0' &&
+    verdictLabelOf({ ...DEFAULT_THRESHOLDS, medianRule: { enabled: false, threshold: 0 } }) === 'PCE冠军 Δ≥0' &&
+    verdictLabelOf(strict) === 'PCE中位 Δ≥0.5' &&
+    verdictLabelOf({
+      ...DEFAULT_THRESHOLDS,
+      vocffRule: { enabled: true, threshold: 0.02 },
+    }) === 'PCE冠军 Δ≥0 且 PCE中位 Δ≥0 且 Voc*FF平均 Δ≥0.02',
+);
+check(
+  'getVerdict 多选规则 AND 语义 + Δ≥阈值边界',
+  getVerdict(0.1, -0.2, 0.3, { ...DEFAULT_THRESHOLDS, vocffRule: { enabled: true, threshold: 0 } }) === '不合格' &&
+    getVerdict(0, 0, -5, DEFAULT_THRESHOLDS) === '优秀' &&
+    getVerdict(-0.1, 0.2, 0.3, {
+      ...DEFAULT_THRESHOLDS,
+      championRule: { enabled: true, threshold: -0.5 },
+      medianRule: { enabled: false, threshold: 0 },
+    }) === '优秀',
+);
+check(
+  '旧版 verdictMode 单阈值配置自动迁移为规则形式',
+  (() => {
+    const m = sanitizeThresholds({ verdictMode: 'median_only', verdictThreshold: 0.5 });
+    return m.medianRule.enabled && !m.championRule.enabled && !m.vocffRule.enabled &&
+      m.medianRule.threshold === 0.5;
+  })(),
+);
+check(
+  '旧版 champion_only 配置自动迁移为规则形式',
+  (() => {
+    const m = sanitizeThresholds({ verdictMode: 'champion_only', verdictThreshold: 0.2 });
+    return m.championRule.enabled && !m.medianRule.enabled && m.championRule.threshold === 0.2;
+  })(),
+);
+check(
+  '全部规则停用时回退默认规则集（空规则会把所有批次判为优秀）',
+  (() => {
+    const m = sanitizeThresholds({
+      championRule: { enabled: false },
+      medianRule: { enabled: false },
+      vocffRule: { enabled: false },
+    });
+    return m.championRule.enabled && m.medianRule.enabled && !m.vocffRule.enabled;
+  })(),
 );
 check(
   '基准批次无有效测试记录时 baseline = null（避免 NaN Δ 把所有批次误判为不合格）',
@@ -1169,25 +1213,27 @@ section('9. Baseline 对比判定');
           buildReportData(batchIds, records, { ...DEFAULT_THRESHOLDS, pceMin: 100 }),
         ).includes('无符合统计口径的有效测试记录'),
       );
-      // 判定逻辑可配置性
+      // 判定逻辑可配置性（单选规则：仅中位 / 仅冠军）
       const medianOnly = buildReportData(batchIds, records, {
         ...DEFAULT_THRESHOLDS,
-        verdictMode: 'median_only',
+        championRule: { enabled: false, threshold: 0 },
+        medianRule: { enabled: true, threshold: 0 },
       }, baseline.batchId);
       if (medianOnly.baseline) {
-        check('median_only 模式判定与独立逻辑一致',
+        check('仅中位规则判定与独立逻辑一致（Δ≥0）',
           medianOnly.baseline.diffs.every((d) =>
-            (d.verdict === '优秀') === (d.medianDelta > 0)),
+            (d.verdict === '优秀') === (d.medianDelta >= 0)),
         );
       }
       const championOnly = buildReportData(batchIds, records, {
         ...DEFAULT_THRESHOLDS,
-        verdictMode: 'champion_only',
+        championRule: { enabled: true, threshold: 0 },
+        medianRule: { enabled: false, threshold: 0 },
       }, baseline.batchId);
       if (championOnly.baseline) {
-        check('champion_only 模式判定与独立逻辑一致',
+        check('仅冠军规则判定与独立逻辑一致（Δ≥0）',
           championOnly.baseline.diffs.every((d) =>
-            (d.verdict === '优秀') === (d.championDelta > 0)),
+            (d.verdict === '优秀') === (d.championDelta >= 0)),
         );
       }
     }
@@ -1563,7 +1609,7 @@ section('12. 云端共享设置解析（cloudSettings）');
   const { parseCloudSettings } = await import('../src/utils/cloudSettings');
   const { sanitizeThresholds } = await import('../src/report/reportData');
 
-  // 完整 JSON：两字段均解析
+  // 完整 JSON：两字段均解析（口径为旧版格式，验证云端读取时自动迁移为规则形式）
   const full = parseCloudSettings(
     JSON.stringify({
       criteria: { verdictMode: 'champion_only', verdictThreshold: 0.5, pceMin: 16, ffMin: 0.55, resistanceMin: 10 },
@@ -1572,9 +1618,11 @@ section('12. 云端共享设置解析（cloudSettings）');
     }),
   );
   check(
-    '完整 JSON 解析：口径 + 收件人均读出',
+    '完整 JSON 解析：口径（旧版自动迁移）+ 收件人均读出',
     full !== null &&
-      full.criteria?.verdictMode === 'champion_only' &&
+      full.criteria?.championRule.enabled === true &&
+      full.criteria.championRule.threshold === 0.5 &&
+      full.criteria.medianRule.enabled === false &&
       full.criteria.pceMin === 16 &&
       full.mailRecipients?.length === 2 &&
       full.mailRecipients[1] === 'b@y.com' &&
@@ -1599,11 +1647,13 @@ section('12. 云端共享设置解析（cloudSettings）');
   check('空字符串返回 null', parseCloudSettings('') === null);
   check('非对象 JSON（数组）返回 null', parseCloudSettings('[1,2]') === null);
 
-  // 口径字段非法值回退默认（sanitizeThresholds）
+  // 口径字段非法值回退默认（sanitizeThresholds；verdictMode 非法值不触发迁移）
   const bad = sanitizeThresholds({ verdictMode: 'hack', verdictThreshold: 'x' as unknown as number, pceMin: NaN });
   check(
     '口径非法字段回退默认值',
-    bad.verdictMode === 'champion_and_median' && bad.verdictThreshold === 0 && bad.pceMin === 15 && bad.ffMin === 0.5 && bad.resistanceMin === 0,
+    bad.championRule.enabled === true && bad.championRule.threshold === 0 &&
+      bad.medianRule.enabled === true && bad.vocffRule.enabled === false &&
+      bad.pceMin === 15 && bad.ffMin === 0.5 && bad.resistanceMin === 0,
     JSON.stringify(bad),
   );
 

@@ -4,12 +4,21 @@ import { computeBoxplot, fmt, median } from '../utils/statistics';
 
 /* ================= 统计口径 ================= */
 
-/** 统计口径配置（可在系统设置中配置，持久化于 localStorage） */
+/** 优秀批次判定规则（可单选/多选，启用项须同时满足） */
+export interface VerdictRule {
+  enabled: boolean;
+  /** Δ ≥ 该阈值判为满足（默认 0，即不劣于基准） */
+  threshold: number;
+}
+
+/** 统计口径配置（报告生成页配置，持久化于 localStorage） */
 export interface CriteriaThresholds {
-  /** 优秀判定方式：champion_and_median = 冠军Δ>0 且中位Δ>0 */
-  verdictMode: 'champion_and_median' | 'champion_only' | 'median_only';
-  /** 优秀判定阈值：Δ > 该值（默认 0，即优于基准即可） */
-  verdictThreshold: number;
+  /** 优秀判定：PCE 冠军 Δ≥阈值 */
+  championRule: VerdictRule;
+  /** 优秀判定：PCE 中位 Δ≥阈值 */
+  medianRule: VerdictRule;
+  /** 优秀判定：Voc*FF 平均 Δ≥阈值 */
+  vocffRule: VerdictRule;
   /** 有效测试记录效率下限（PCE ≥ 该值，%） */
   pceMin: number;
   /** 有效测试记录填充因子下限（FF ≥ 该值） */
@@ -18,10 +27,11 @@ export interface CriteriaThresholds {
   resistanceMin: number;
 }
 
-/** 默认口径 */
+/** 默认口径（冠军与中位同时启用，与历史默认判定一致） */
 export const DEFAULT_THRESHOLDS: CriteriaThresholds = {
-  verdictMode: 'champion_and_median',
-  verdictThreshold: 0,
+  championRule: { enabled: true, threshold: 0 },
+  medianRule: { enabled: true, threshold: 0 },
+  vocffRule: { enabled: false, threshold: 0 },
   pceMin: 15,
   ffMin: 0.5,
   resistanceMin: 0,
@@ -30,20 +40,51 @@ export const DEFAULT_THRESHOLDS: CriteriaThresholds = {
 /** localStorage 持久化键 */
 export const CRITERIA_STORAGE_KEY = 'dv-criteria-thresholds';
 
-/** 口径字段防御性校验（非法/缺失回退默认值），localStorage 与云端解析共用 */
+/** 口径字段防御性校验（非法/缺失回退默认值），localStorage 与云端解析共用；
+ *  兼容旧版 verdictMode/verdictThreshold 单阈值配置（自动迁移为规则形式） */
 export function sanitizeThresholds(
-  parsed: Partial<CriteriaThresholds> | null | undefined,
+  parsed: Partial<CriteriaThresholds> & {
+    /** @deprecated 旧版单阈值判定方式 */
+    verdictMode?: 'champion_and_median' | 'champion_only' | 'median_only';
+    verdictThreshold?: number;
+  } | null | undefined,
 ): CriteriaThresholds {
   const num = (v: unknown) => (typeof v === 'number' && !isNaN(v) ? v : null);
+  const rule = (v: unknown, fallback: VerdictRule): VerdictRule => {
+    if (typeof v === 'object' && v !== null) {
+      const o = v as { enabled?: unknown; threshold?: unknown };
+      return {
+        enabled: typeof o.enabled === 'boolean' ? o.enabled : fallback.enabled,
+        threshold: num(o.threshold) ?? fallback.threshold,
+      };
+    }
+    return { ...fallback };
+  };
   const p = parsed ?? {};
+  let championRule = rule(p.championRule, DEFAULT_THRESHOLDS.championRule);
+  let medianRule = rule(p.medianRule, DEFAULT_THRESHOLDS.medianRule);
+  let vocffRule = rule(p.vocffRule, DEFAULT_THRESHOLDS.vocffRule);
+  /* 旧版配置迁移：verdictMode 单阈值 → 对应规则组合 */
+  if (
+    p.verdictMode === 'champion_and_median' ||
+    p.verdictMode === 'champion_only' ||
+    p.verdictMode === 'median_only'
+  ) {
+    const th = num(p.verdictThreshold) ?? 0;
+    championRule = { enabled: p.verdictMode !== 'median_only', threshold: th };
+    medianRule = { enabled: p.verdictMode !== 'champion_only', threshold: th };
+    vocffRule = { enabled: false, threshold: th };
+  }
+  /* 全部规则被停用时回退默认（空规则集会把所有批次判为优秀，无意义） */
+  if (!championRule.enabled && !medianRule.enabled && !vocffRule.enabled) {
+    championRule = { ...DEFAULT_THRESHOLDS.championRule };
+    medianRule = { ...DEFAULT_THRESHOLDS.medianRule };
+    vocffRule = { ...DEFAULT_THRESHOLDS.vocffRule };
+  }
   return {
-    verdictMode: (
-      p.verdictMode === 'champion_only' ||
-      p.verdictMode === 'median_only'
-        ? p.verdictMode
-        : DEFAULT_THRESHOLDS.verdictMode
-    ),
-    verdictThreshold: num(p.verdictThreshold) ?? DEFAULT_THRESHOLDS.verdictThreshold,
+    championRule,
+    medianRule,
+    vocffRule,
     pceMin: num(p.pceMin) ?? DEFAULT_THRESHOLDS.pceMin,
     ffMin: num(p.ffMin) ?? DEFAULT_THRESHOLDS.ffMin,
     resistanceMin: num(p.resistanceMin) ?? DEFAULT_THRESHOLDS.resistanceMin,
@@ -84,10 +125,11 @@ export function criteriaText(t: CriteriaThresholds): string {
 
 /** 优秀判定文字描述（随判定配置生成，报告表格注释 / Excel 注释 / 结论文案共用） */
 export function verdictLabelOf(t: CriteriaThresholds): string {
-  const th = t.verdictThreshold !== 0 ? `（Δ>${t.verdictThreshold}）` : '';
-  if (t.verdictMode === 'champion_only') return `冠军 Δ>0${th}`;
-  if (t.verdictMode === 'median_only') return `中位 Δ>0${th}`;
-  return `冠军 Δ>0 且 中位 Δ>0${th}`;
+  const parts: string[] = [];
+  if (t.championRule.enabled) parts.push(`PCE冠军 Δ≥${t.championRule.threshold}`);
+  if (t.medianRule.enabled) parts.push(`PCE中位 Δ≥${t.medianRule.threshold}`);
+  if (t.vocffRule.enabled) parts.push(`Voc*FF平均 Δ≥${t.vocffRule.threshold}`);
+  return parts.length > 0 ? parts.join(' 且 ') : '未配置';
 }
 
 /** 口径文字描述（仅有效测试记录判定部分，不含统计口径与判定逻辑） */
@@ -95,22 +137,21 @@ export function criteriaTextShort(t: CriteriaThresholds = DEFAULT_THRESHOLDS): s
   return `反扫且 PCE≥${t.pceMin}%、FF≥${t.ffMin}、Rs/Rsh>${t.resistanceMin}Ω 的测试记录`;
 }
 
-/** 优秀判定结果（基于口径配置） */
+/** 优秀判定结果：启用规则须同时满足（Δ≥各自阈值）；全部停用时回退默认规则集 */
 export function getVerdict(
   championDelta: number,
   medianDelta: number,
+  vocffMeanDelta: number,
   t: CriteriaThresholds = DEFAULT_THRESHOLDS,
 ): '优秀' | '不合格' {
-  const th = t.verdictThreshold;
-  switch (t.verdictMode) {
-    case 'champion_only':
-      return championDelta > th ? '优秀' : '不合格';
-    case 'median_only':
-      return medianDelta > th ? '优秀' : '不合格';
-    case 'champion_and_median':
-    default:
-      return championDelta > th && medianDelta > th ? '优秀' : '不合格';
+  const checks: boolean[] = [];
+  if (t.championRule.enabled) checks.push(championDelta >= t.championRule.threshold);
+  if (t.medianRule.enabled) checks.push(medianDelta >= t.medianRule.threshold);
+  if (t.vocffRule.enabled) checks.push(vocffMeanDelta >= t.vocffRule.threshold);
+  if (checks.length === 0) {
+    return getVerdict(championDelta, medianDelta, vocffMeanDelta, DEFAULT_THRESHOLDS);
   }
+  return checks.every(Boolean) ? '优秀' : '不合格';
 }
 
 /** 默认口径文字（向后兼容：未传阈值时的展示文案） */
@@ -392,6 +433,7 @@ export function buildReportData(
         const med = median(effs);
         const medianDelta = med - baselineMedian;
         const vocffMean = metricStats['vocff'][g.batchId]?.mean ?? NaN;
+        const vocffMeanDelta = vocffMean - baselineVocffMean;
         diffs.push({
           batchId: g.batchId,
           champion,
@@ -399,8 +441,8 @@ export function buildReportData(
           median: med,
           medianDelta,
           vocffMean,
-          vocffMeanDelta: vocffMean - baselineVocffMean,
-          verdict: getVerdict(championDelta, medianDelta, thresholds),
+          vocffMeanDelta,
+          verdict: getVerdict(championDelta, medianDelta, vocffMeanDelta, thresholds),
         });
       }
       baseline = {

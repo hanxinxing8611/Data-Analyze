@@ -96,14 +96,15 @@ function generateConclusion(
     lines.push('本轮无批次达到优秀标准。');
   }
   if (unqualified.length > 0) {
-    const th = thresholds.verdictThreshold;
-    const showChampion = thresholds.verdictMode !== 'median_only';
-    const showMedian = thresholds.verdictMode !== 'champion_only';
     const reasons = unqualified
       .map((d) => {
         const parts: string[] = [];
-        if (showChampion && d.championDelta <= th) parts.push(`冠军 PCE Δ=${fmt(d.championDelta, 2)}`);
-        if (showMedian && d.medianDelta <= th) parts.push(`中位 PCE Δ=${fmt(d.medianDelta, 2)}`);
+        if (thresholds.championRule.enabled && d.championDelta < thresholds.championRule.threshold)
+          parts.push(`PCE冠军 Δ=${fmt(d.championDelta, 2)}＜${thresholds.championRule.threshold}`);
+        if (thresholds.medianRule.enabled && d.medianDelta < thresholds.medianRule.threshold)
+          parts.push(`PCE中位 Δ=${fmt(d.medianDelta, 2)}＜${thresholds.medianRule.threshold}`);
+        if (thresholds.vocffRule.enabled && d.vocffMeanDelta < thresholds.vocffRule.threshold)
+          parts.push(`Voc*FF平均 Δ=${fmt(d.vocffMeanDelta, 2)}＜${thresholds.vocffRule.threshold}`);
         if (parts.length === 0) parts.push('Δ 未达判定阈值');
         return `「${d.batchId}」（${parts.join('，')}）`;
       })
@@ -230,6 +231,7 @@ export default function Comparison() {
       if (!s || isNaN(s.champion)) continue;
       const championDelta = s.champion - baselineStats.champion;
       const medianDelta = s.median - baselineStats.median;
+      const vocffMeanDelta = s.vocffMean - baselineStats.vocffMean;
       results.push({
         batchId: g.batchId,
         champion: s.champion,
@@ -237,10 +239,10 @@ export default function Comparison() {
         median: s.median,
         medianDelta,
         vocffMean: s.vocffMean,
-        vocffMeanDelta: s.vocffMean - baselineStats.vocffMean,
+        vocffMeanDelta,
         validCount: s.count,
         totalCount: s.total,
-        verdict: getVerdict(championDelta, medianDelta, thresholds),
+        verdict: getVerdict(championDelta, medianDelta, vocffMeanDelta, thresholds),
       });
     }
     return results;
@@ -250,7 +252,7 @@ export default function Comparison() {
   const conclusion = useMemo(() => {
     if (!baseline || !baselineStats) return '';
     if (isNaN(baselineStats.champion) || isNaN(baselineStats.median)) {
-      return `基准批次「${baseline}」在当前统计口径下无有效测试记录，无法进行差值对比；请调整统计口径（系统设置）或更换基准批次。`;
+      return `基准批次「${baseline}」在当前统计口径下无有效测试记录，无法进行差值对比；请调整统计口径（报告生成页）或更换基准批次。`;
     }
     return generateConclusion(baseline, baselineStats.champion, baselineStats.median, diffResults, thresholds);
   }, [baseline, baselineStats, diffResults, thresholds]);

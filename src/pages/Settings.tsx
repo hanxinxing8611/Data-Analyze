@@ -3,11 +3,6 @@ import { useCriteria } from '../store/CriteriaContext';
 import { Button, Card, PageHeader } from '../components/ui';
 import Icon from '../components/layout/Icon';
 import {
-  DEFAULT_THRESHOLDS,
-  criteriaText,
-  type CriteriaThresholds,
-} from '../report/reportData';
-import {
   isValidEmail,
   loadMailRecipients,
   saveMailRecipients,
@@ -27,16 +22,6 @@ import {
 const SETTINGS_PASSWORD = '000000';
 /** 解锁状态会话内有效（关闭标签页后失效），刷新页面不重复输入 */
 const UNLOCKED_KEY = 'dv-settings-unlocked';
-
-/** 数值输入框状态 */
-interface NumberField {
-  value: string;
-  error: string;
-}
-
-function emptyField(n: number): NumberField {
-  return { value: String(n), error: '' };
-}
 
 /* ================= 密码解锁遮罩 ================= */
 
@@ -90,7 +75,7 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
             系统设置已锁定
           </h2>
           <p className="mt-1.5 text-xs leading-5 text-slate-500">
-            本页参数（统计口径、收件人）将云端共享给全团队，仅系统管理员可修改
+            收件人与云端共享配置会影响全团队，请输入管理员密码
           </p>
         </div>
         <input
@@ -119,247 +104,6 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
         </button>
       </form>
     </div>
-  );
-}
-
-/* ================= 统计口径表单 ================= */
-
-function CriteriaForm() {
-  const { thresholds, saveThresholds, resetThresholds } = useCriteria();
-  const [verdictMode, setVerdictMode] = useState(thresholds.verdictMode);
-  const [verdictTh, setVerdictTh] = useState<NumberField>(
-    () => emptyField(thresholds.verdictThreshold),
-  );
-  const [pceMin, setPceMin] = useState<NumberField>(() => emptyField(thresholds.pceMin));
-  const [ffMin, setFfMin] = useState<NumberField>(() => emptyField(thresholds.ffMin));
-  const [resistanceMin, setResistanceMin] = useState<NumberField>(
-    () => emptyField(thresholds.resistanceMin),
-  );
-  const [saved, setSaved] = useState(false);
-  /** 云端同步结果提示（保存后显示） */
-  const [cloudMsg, setCloudMsg] = useState('');
-
-  /** 外部更新（云端拉取应用）时同步表单显示 */
-  useEffect(() => {
-    setVerdictMode(thresholds.verdictMode);
-    setVerdictTh(emptyField(thresholds.verdictThreshold));
-    setPceMin(emptyField(thresholds.pceMin));
-    setFfMin(emptyField(thresholds.ffMin));
-    setResistanceMin(emptyField(thresholds.resistanceMin));
-  }, [thresholds]);
-
-  const dirty =
-    verdictMode !== thresholds.verdictMode ||
-    verdictTh.value !== String(thresholds.verdictThreshold) ||
-    pceMin.value !== String(thresholds.pceMin) ||
-    ffMin.value !== String(thresholds.ffMin) ||
-    resistanceMin.value !== String(thresholds.resistanceMin);
-
-  /** 校验并提交；返回是否成功 */
-  const validate = (f: NumberField, min: number, max: number, label: string): NumberField => {
-    const n = parseFloat(f.value);
-    if (f.value.trim() === '' || isNaN(n)) return { ...f, error: `${label}须为数值` };
-    if (n < min || n > max) return { ...f, error: `取值范围 ${min} ~ ${max}` };
-    return { value: f.value, error: '' };
-  };
-
-  const handleSave = () => {
-    const vt = validate(verdictTh, -100, 100, 'Δ 阈值');
-    const pc = validate(pceMin, 0, 100, 'PCE 下限');
-    const ff = validate(ffMin, 0, 1, 'FF 下限');
-    const rs = validate(resistanceMin, 0, 1e9, '电阻下限');
-    setVerdictTh(vt);
-    setPceMin(pc);
-    setFfMin(ff);
-    setResistanceMin(rs);
-    if (vt.error || pc.error || ff.error || rs.error) return;
-
-    const next: CriteriaThresholds = {
-      verdictMode,
-      verdictThreshold: parseFloat(vt.value),
-      pceMin: parseFloat(pc.value),
-      ffMin: parseFloat(ff.value),
-      resistanceMin: parseFloat(rs.value),
-    };
-    saveThresholds(next);
-    setVerdictTh(emptyField(next.verdictThreshold));
-    setPceMin(emptyField(next.pceMin));
-    setFfMin(emptyField(next.ffMin));
-    setResistanceMin(emptyField(next.resistanceMin));
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
-
-    // 已配置云端共享时推送（收件人按共享开关一并打包）
-    const cfg = loadCloudConfig();
-    if (cfg.token) {
-      setCloudMsg('正在同步云端…');
-      void syncSettingsToCloud().then((r) => {
-        if (r.ok) {
-          setCloudMsg('已同步云端，其他工程师下次打开页面即生效');
-        } else if (r.message === 'nothing') {
-          setCloudMsg('已保存（本机）——云端共享未勾选任何项目');
-        } else {
-          setCloudMsg(`已保存（本机），云端同步失败：${r.message}`);
-        }
-        setTimeout(() => setCloudMsg(''), 6000);
-      });
-    }
-  };
-
-  const handleReset = () => {
-    resetThresholds();
-    setVerdictMode(DEFAULT_THRESHOLDS.verdictMode);
-    setVerdictTh(emptyField(DEFAULT_THRESHOLDS.verdictThreshold));
-    setPceMin(emptyField(DEFAULT_THRESHOLDS.pceMin));
-    setFfMin(emptyField(DEFAULT_THRESHOLDS.ffMin));
-    setResistanceMin(emptyField(DEFAULT_THRESHOLDS.resistanceMin));
-  };
-
-  const fieldCls = (err: string) =>
-    `w-32 rounded-lg border px-3 py-2 text-right font-mono text-sm outline-none transition-colors ${
-      err ? 'border-red-300 bg-red-50 focus:border-red-400' : 'border-slate-300 focus:border-blue-500'
-    }`;
-
-  return (
-    <Card
-      title="统计口径设置"
-      extra={<span className="text-[11px] text-slate-400">修改后全部报告统计实时重算</span>}
-    >
-      <div className="space-y-4">
-        <p className="text-sm leading-6 text-slate-600">
-          全部统计基于各批次有效测试记录；「有效 X/Y」= 符合口径反扫数 / 反扫总数。
-          当前口径：
-          <span className="ml-1 rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700">
-            {criteriaText(thresholds)}
-          </span>
-        </p>
-
-        {/* 有效测试记录判定阈值 */}
-        <div className="rounded-lg border border-slate-100 bg-slate-50/60 px-4 py-3">
-          <div className="mb-2 text-sm font-medium text-slate-700">有效测试记录判定</div>
-          <p className="mb-3 text-[11px] leading-4 text-slate-400">
-            反扫记录需同时满足以下条件才算有效测试记录；修改后全部报告统计实时重算
-          </p>
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500">PCE 下限（%）</span>
-              <input
-                type="number"
-                step="any"
-                value={pceMin.value}
-                onChange={(e) => setPceMin({ value: e.target.value, error: '' })}
-                className={fieldCls(pceMin.error)}
-              />
-              {pceMin.error && <span className="text-xs text-red-500">{pceMin.error}</span>}
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500">FF 下限</span>
-              <input
-                type="number"
-                step="any"
-                value={ffMin.value}
-                onChange={(e) => setFfMin({ value: e.target.value, error: '' })}
-                className={fieldCls(ffMin.error)}
-              />
-              {ffMin.error && <span className="text-xs text-red-500">{ffMin.error}</span>}
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500">电阻下限（Ω，Rs/Rsh &gt;）</span>
-              <input
-                type="number"
-                step="any"
-                value={resistanceMin.value}
-                onChange={(e) => setResistanceMin({ value: e.target.value, error: '' })}
-                className={fieldCls(resistanceMin.error)}
-              />
-              {resistanceMin.error && (
-                <span className="text-xs text-red-500">{resistanceMin.error}</span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* 优秀判定逻辑 */}
-        <div className="rounded-lg border border-slate-100 bg-slate-50/60 px-4 py-3">
-          <div className="mb-2 text-sm font-medium text-slate-700">优秀批次判定</div>
-          <p className="mb-3 text-[11px] leading-4 text-slate-400">
-            对比批次与 Baseline 比较时，满足以下条件即判定为「优秀」；否则为「不合格」
-          </p>
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-1.5 text-xs text-slate-600">
-                <input
-                  type="radio"
-                  name="verdictMode"
-                  checked={verdictMode === 'champion_and_median'}
-                  onChange={() => setVerdictMode('champion_and_median')}
-                  className="text-blue-600"
-                />
-                冠军 Δ&gt;0 且 中位 Δ&gt;0
-              </label>
-              <label className="flex items-center gap-1.5 text-xs text-slate-600">
-                <input
-                  type="radio"
-                  name="verdictMode"
-                  checked={verdictMode === 'champion_only'}
-                  onChange={() => setVerdictMode('champion_only')}
-                  className="text-blue-600"
-                />
-                仅冠军 Δ&gt;0
-              </label>
-              <label className="flex items-center gap-1.5 text-xs text-slate-600">
-                <input
-                  type="radio"
-                  name="verdictMode"
-                  checked={verdictMode === 'median_only'}
-                  onChange={() => setVerdictMode('median_only')}
-                  className="text-blue-600"
-                />
-                仅中位 Δ&gt;0
-              </label>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500">Δ 阈值</span>
-              <input
-                type="number"
-                step="any"
-                value={verdictTh.value}
-                onChange={(e) => setVerdictTh({ value: e.target.value, error: '' })}
-                className={fieldCls(verdictTh.error)}
-              />
-              {verdictTh.error && (
-                <span className="text-xs text-red-500">{verdictTh.error}</span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between border-t border-slate-100 pt-4">
-          <div className="min-w-0">
-            <p className="text-xs text-slate-400">
-              {saved ? (
-                <span className="text-emerald-600">已保存，报告页与导出将使用新口径</span>
-              ) : dirty ? (
-                <span className="text-amber-600">有未保存的修改</span>
-              ) : (
-                '配置持久化于本浏览器，默认：PCE≥15%、FF≥0.5、Rs/Rsh>0Ω，冠军 Δ>0 且 中位 Δ>0'
-              )}
-            </p>
-            {cloudMsg && (
-              <p className={`mt-0.5 text-xs ${cloudMsg.includes('失败') ? 'text-red-500' : 'text-blue-600'}`}>
-                {cloudMsg}
-              </p>
-            )}
-          </div>
-          <div className="flex shrink-0 items-center gap-3">
-            <Button variant="secondary" onClick={handleReset}>
-              恢复默认
-            </Button>
-            <Button onClick={handleSave}>保存口径</Button>
-          </div>
-        </div>
-      </div>
-    </Card>
   );
 }
 
@@ -472,7 +216,7 @@ function MailRecipientsCard() {
 
         <p className="text-xs text-slate-400">
           收件人保存在本机浏览器中，仅影响「发送邮件」的默认收件人列表，可随时增删；
-          配置云端共享后将随「保存口径 / 增删收件人」同步到云端（见下方「云端共享设置」）。
+          配置云端共享后将随「保存口径（报告生成页）/ 增删收件人」同步到云端（见下方「云端共享设置」）。
         </p>
       </div>
     </Card>
@@ -573,7 +317,7 @@ function CloudSyncCard() {
     <Card title="云端共享设置">
       <div className="space-y-4 text-sm text-slate-600">
         <p>
-          保存统计口径 / 收件人时自动<b className="text-slate-800">同步到 GitHub 仓库</b>
+          保存统计口径（报告生成页）/ 收件人时自动<b className="text-slate-800">同步到 GitHub 仓库</b>
           （shared/settings.json），其他工程师打开页面时自动拉取，全团队口径一致。
           无 Token 时保存仅本机生效。
         </p>
@@ -729,7 +473,7 @@ export default function Settings() {
       <div>
         <PageHeader
           title="系统设置"
-          description="统计口径与云端共享配置（需系统管理员权限）"
+          description="默认收件人与云端共享配置（需系统管理员权限）"
         />
         <PasswordGate onUnlock={() => setUnlocked(true)} />
       </div>
@@ -740,12 +484,10 @@ export default function Settings() {
     <div>
       <PageHeader
         title="系统设置"
-        description="统计口径与云端共享配置（需系统管理员权限）"
+        description="默认收件人与云端共享配置（需系统管理员权限）；统计口径已移至「报告生成」页"
       />
 
       <div className="space-y-6">
-        <CriteriaForm />
-
         <MailRecipientsCard />
 
         <CloudSyncCard />
