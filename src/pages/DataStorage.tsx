@@ -4,7 +4,6 @@ import { queryDashboardStats, resetDB } from '../database/db';
 import {
   exportDatabaseBackup,
   importDatabaseBackup,
-  importSharedSnapshot,
 } from '../database/backup';
 import { Button, Card, PageHeader } from '../components/ui';
 
@@ -52,7 +51,7 @@ function StorageOverview() {
 function BackupCard() {
   const { refresh } = useData();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState<'export' | 'import' | 'pull' | null>(null);
+  const [busy, setBusy] = useState<'export' | 'import' | null>(null);
   const [msg, setMsg] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
 
   const summarize = (s: {
@@ -102,30 +101,6 @@ function BackupCard() {
     }
   };
 
-  const handlePullShared = async () => {
-    const stats = queryDashboardStats();
-    const ok = window.confirm(
-      '将从站点共享数据快照（public/shared/data-latest.xlsx）拉取并替换当前全部数据\n' +
-        `（当前：${stats.totalBatches} 批次 / ${stats.totalSamples} 样本）。\n` +
-        '此操作会先清空现有数据再导入共享数据，确定继续吗？',
-    );
-    if (!ok) return;
-    setBusy('pull');
-    setMsg(null);
-    try {
-      const summary = await importSharedSnapshot();
-      refresh();
-      setMsg({ tone: 'success', text: `共享数据已拉取：${summarize(summary)}` });
-    } catch (e) {
-      setMsg({
-        tone: 'error',
-        text: `拉取失败（数据未改动）：${e instanceof Error ? e.message : String(e)}`,
-      });
-    } finally {
-      setBusy(null);
-    }
-  };
-
   return (
     <Card
       title="数据库备份"
@@ -135,7 +110,6 @@ function BackupCard() {
         <p className="text-sm leading-6 text-slate-600">
           导出全部数据（材料批次、样本记录、IV 曲线、报告文字模板）为 Excel 工作簿，
           可用于定期备份或将数据迁移到其他设备；导入时会替换当前全部数据。
-          也可直接拉取维护者发布在站点上的共享数据快照。
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <Button onClick={handleExport} disabled={busy !== null}>
@@ -143,9 +117,6 @@ function BackupCard() {
           </Button>
           <Button variant="secondary" onClick={() => fileRef.current?.click()} disabled={busy !== null}>
             {busy === 'import' ? '导入中…' : '导入备份'}
-          </Button>
-          <Button variant="secondary" onClick={handlePullShared} disabled={busy !== null}>
-            {busy === 'pull' ? '拉取中…' : '拉取共享数据'}
           </Button>
           <input
             ref={fileRef}
@@ -165,7 +136,6 @@ function BackupCard() {
         </div>
         <p className="text-xs text-slate-400">
           注意：仅支持本系统导出的 .xlsx 备份；旧版 .xls 文件请先用 Excel 另存为 .xlsx 再导入。
-          「拉取共享数据」依赖维护者发布的共享快照（未发布时会给出提示，本地数据不受影响）。
         </p>
       </div>
     </Card>

@@ -3,7 +3,6 @@
  *
  * - exportDatabaseBackup：导出四张表为 .xlsx 工作簿并触发下载
  * - importDatabaseBackup：读取 .xlsx 备份，替换当前全部数据并持久化
- * - importSharedSnapshot：拉取部署站点的共享数据快照（public/shared/data-latest.xlsx）
  */
 import ExcelJS from 'exceljs';
 import { getDB, saveDB } from './db';
@@ -56,32 +55,4 @@ export async function importDatabaseBackup(file: File): Promise<BackupSummary> {
   }
   await saveDB();
   return summary;
-}
-
-/**
- * 拉取共享数据快照并替换当前全部数据：
- * 快照由维护者发布于仓库 public/shared/data-latest.xlsx（随站点一起部署），
- * 任意工程师打开站点即可一键拉取权威数据集。
- */
-export async function importSharedSnapshot(): Promise<BackupSummary> {
-  // BASE_URL：生产为 /Data-Analyze/，开发为 /；查询参数避免 Pages 短缓存拿到旧快照
-  const url = `${import.meta.env.BASE_URL}shared/data-latest.xlsx?t=${Date.now()}`;
-  let res: Response;
-  try {
-    res = await fetch(url);
-  } catch {
-    throw new Error('无法访问共享数据（网络异常），请检查网络后重试');
-  }
-  if (!res.ok) {
-    throw new Error(
-      res.status === 404
-        ? '共享数据尚未发布：请维护者将最新备份 xlsx 放入 public/shared/data-latest.xlsx 并推送'
-        : `共享数据拉取失败（HTTP ${res.status}），请稍后重试`,
-    );
-  }
-  const blob = await res.blob();
-  const file = new File([blob], 'data-latest.xlsx', {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  });
-  return importDatabaseBackup(file);
 }
