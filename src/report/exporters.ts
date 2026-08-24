@@ -152,117 +152,17 @@ export function buildReportFileName(
   return `${date6}.${parts.join('-')}.${ext}`;
 }
 
-/* ================= PDF 封面与页脚 ================= */
+/* ================= PDF 页脚 ================= */
 
-/** A4 版面常量（分页、封面与页脚绘制共用） */
+/** A4 版面常量（分页与页脚绘制共用） */
 export const PDF_LAYOUT = {
   PW: 210, // 页宽（mm）
   PH: 297, // 页高（mm）
   FOOTER_RESERVE: 8, // 页脚保留区高度（mm），正文排版不越过此线
 };
 
-/** 封面/页脚绘制精度（px/mm，兼顾清晰度与文件体积） */
+/** 页脚绘制精度（px/mm，兼顾清晰度与文件体积） */
 const COVER_PX_PER_MM = 6;
-
-/**
- * 绘制 PDF 封面页画布（导出时置于首页，独占一页；预览不显示）：
- * 系统名 + 报告标题 + 蓝色装饰条 + 报告信息（汇报人/日期/批次/基准/统计口径）。
- * 参与批次过多时值区按「、」折行（每行 ≤150mm），首行带标签、续行留空。
- */
-export function buildCoverBlock(meta: ReportMetaInput, data: ReportData): CapturedBlock {
-  const PXMM = COVER_PX_PER_MM;
-  const W = PDF_LAYOUT.PW * PXMM;
-  const H = (PDF_LAYOUT.PH - PDF_LAYOUT.FOOTER_RESERVE) * PXMM;
-  const mm = (v: number) => v * PXMM;
-  const canvas = document.createElement('canvas');
-  canvas.width = W;
-  canvas.height = H;
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, W, H);
-    ctx.textBaseline = 'middle';
-
-    /* 系统名（顶部小字） */
-    ctx.fillStyle = '#94A3B8';
-    ctx.font = `400 ${mm(4)}px ${FONT_STACK}`;
-    ctx.textAlign = 'center';
-    ctx.fillText('器件验证数据分析系统', W / 2, mm(50));
-
-    /* 报告标题 */
-    ctx.fillStyle = '#0F172A';
-    ctx.font = `700 ${mm(10.5)}px ${FONT_STACK}`;
-    ctx.fillText('钙钛矿器件验证对比分析报告', W / 2, mm(76));
-
-    /* 蓝色装饰条（与正文小标题蓝色块呼应） */
-    ctx.fillStyle = '#2563EB';
-    ctx.fillRect((W - mm(42)) / 2, mm(88), mm(42), mm(1.6));
-
-    /* 报告信息：标签右对齐 + 值左对齐，整块水平居中 */
-    const info: [string, string][] = [
-      ['汇报人', meta.reporter?.trim() || '—'],
-      ['汇报日期', meta.report_date || '—'],
-      ['参与批次', `${data.totals.batches} 个：${data.groups.map((g) => g.batchId).join('、') || '—'}`],
-    ];
-    if (data.baseline) info.push(['基准批次', data.baseline.baselineBatchId]);
-    info.push(
-      ['测试记录', `${data.totals.samples} 条（其中反扫 ${data.totals.reverse} 条）`],
-      ['有效测试记录', `${data.totals.valid}/${data.totals.reverse}（符合口径反扫数 / 反扫总数）`],
-    );
-    const labelFont = `400 ${mm(4.4)}px ${FONT_STACK}`;
-    const valueFont = `500 ${mm(4.6)}px ${FONT_STACK}`;
-    const wrapWidth = mm(150);
-    const rows: [string, string][] = [];
-    ctx.font = valueFont;
-    for (const [label, value] of info) {
-      if (ctx.measureText(value).width <= wrapWidth) {
-        rows.push([label, value]);
-        continue;
-      }
-      let line = '';
-      let firstLine = true;
-      for (const part of value.split('、')) {
-        const next = line ? `${line}、${part}` : part;
-        if (line && ctx.measureText(next).width > wrapWidth) {
-          rows.push([firstLine ? label : '', line]);
-          firstLine = false;
-          line = part;
-        } else {
-          line = next;
-        }
-      }
-      if (line) rows.push([firstLine ? label : '', line]);
-    }
-    ctx.font = labelFont;
-    const labelW = Math.max(1, ...rows.map(([l]) => ctx.measureText(l).width));
-    ctx.font = valueFont;
-    const valueW = Math.max(1, ...rows.map(([, v]) => ctx.measureText(v).width));
-    const gap = mm(6);
-    const labelX = Math.max(0, (W - (labelW + gap + valueW)) / 2) + labelW;
-    const valueX = labelX + gap;
-    let rowY = mm(122);
-    for (const [label, value] of rows) {
-      if (label) {
-        ctx.fillStyle = '#64748B';
-        ctx.font = labelFont;
-        ctx.textAlign = 'right';
-        ctx.fillText(label, labelX, rowY);
-      }
-      ctx.fillStyle = '#1E293B';
-      ctx.font = valueFont;
-      ctx.textAlign = 'left';
-      ctx.fillText(value, valueX, rowY);
-      rowY += mm(13);
-    }
-
-    /* 底部生成说明 */
-    ctx.fillStyle = '#94A3B8';
-    ctx.font = `400 ${mm(3.6)}px ${FONT_STACK}`;
-    ctx.textAlign = 'center';
-    ctx.fillText('本报告由器件验证数据分析系统生成', W / 2, mm(272));
-  }
-  return { name: 'cover', kind: 'cover', canvas };
-}
 
 /** 绘制页脚条画布：顶部浅灰细线 + 左侧报告日期 + 居中页码（第 X 页 / 共 Y 页） */
 function buildFooterStrip(
@@ -329,11 +229,10 @@ function sliceCanvas(
 
 /**
  * 将分块画布打包为 A4 PDF：
- * - 封面块（kind=cover）独占一页，其后内容从新页顶部开始；
  * - 常规块整体放入当前页（放不下则换页），正文高度不超过可用高度（底部预留页脚区）；
  * - 超页高的块按页切片，切片边界对齐分页断点（表格行/段落边界）实现整行换页；
  * - 跨页时在续页顶部重复表头（单表格块的 thead），避免文字在行中间被截断；
- * - 收尾为每页绘制页脚（报告日期 + 第 X 页 / 共 Y 页，封面页除外）。
+ * - 收尾为每页绘制页脚（报告日期 + 第 X 页 / 共 Y 页）。
  */
 export function blocksToPdf(
   blocks: CapturedBlock[],
@@ -348,31 +247,11 @@ export function blocksToPdf(
 
   let y = 0;
   let first = true;
-  let pendingBreak = false; // 封面置入后待换页（下一块从新页顶部开始；封面为末块时不产生空白尾页）
-  let coverPresent = false;
 
   for (const block of blocks) {
     if (block.canvas.height <= 1) continue;
-    if (pendingBreak) {
-      pdf.addPage();
-      y = 0;
-      first = true;
-      pendingBreak = false;
-    }
     const pxPerMm = block.canvas.width / PW;
     const hMm = block.canvas.height / pxPerMm;
-
-    /* 封面：独占一页（置于页首），其后内容强制从新页开始 */
-    if (block.kind === 'cover') {
-      if (!first) {
-        pdf.addPage();
-        y = 0;
-      }
-      pdf.addImage(block.canvas.toDataURL('image/png'), 'PNG', 0, 0, PW, hMm);
-      pendingBreak = true;
-      coverPresent = true;
-      continue;
-    }
 
     if (hMm <= USABLE) {
       if (!first && y + hMm > USABLE) {
@@ -423,11 +302,10 @@ export function blocksToPdf(
     first = false;
   }
 
-  /* 页脚：每页底部保留区绘制报告日期与页码（封面页除外） */
+  /* 页脚：每页底部保留区绘制报告日期与页码 */
   if (options.footer) {
     const total = pdf.getNumberOfPages();
     for (let i = 1; i <= total; i++) {
-      if (coverPresent && i === 1) continue;
       const strip = buildFooterStrip(options.footer.date, i, total);
       if (!strip) continue;
       pdf.setPage(i);
@@ -440,9 +318,7 @@ export function blocksToPdf(
 
 export interface ExportPdfOptions {
   onProgress?: (msg: string) => void;
-  /** 封面块（置于首页，独占一页；预览不显示） */
-  cover?: CapturedBlock;
-  /** 页脚（报告日期 + 页码，封面页不绘制） */
+  /** 页脚（报告日期 + 页码，每页绘制） */
   footer?: { date?: string };
 }
 
@@ -455,7 +331,6 @@ export async function exportPdf(
   const paper = await capturePaper(paperEl);
   options.onProgress?.('正在生成 PDF…');
   const blocks = extractBlocks(paper, paperEl);
-  if (options.cover) blocks.unshift(options.cover);
   blocksToPdf(blocks, filename, { footer: options.footer });
 }
 
@@ -955,7 +830,7 @@ export interface ExportOptions {
   onProgress?: (msg: string) => void;
 }
 
-/** 导出 PDF：截图 → 封面 + 分块 → A4 分页（行感知 + 续页表头 + 页脚页码）；
+/** 导出 PDF：截图 → 分块 → A4 分页（行感知 + 续页表头 + 页脚页码）；
  *  文件名自动生成（日期.汇报人-批次号vs…-器件分析报告.pdf） */
 export async function exportReportPdf(
   paperEl: HTMLElement,
@@ -970,7 +845,6 @@ export async function exportReportPdf(
   );
   await exportPdf(paperEl, filename, {
     onProgress: options.onProgress,
-    cover: buildCoverBlock(meta, data),
     footer: { date: meta.report_date },
   });
 }

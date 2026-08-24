@@ -7,10 +7,16 @@ import { queryBatches, querySamples, saveReportMeta, queryRecentReportMetas } fr
 import { Badge, Button, Card, EmptyState, Loading, PageHeader } from '../components/ui';
 import ReportTemplate from '../report/ReportTemplate';
 import {
+  batchLabelOf,
+  buildOverviewSummary,
   buildReportData,
+  buildSummaryGroups,
   criteriaTextShort,
   generateDiscussionDraft,
   isValidDevice,
+  metricValue,
+  scanLabelOf,
+  type ReportData,
 } from '../report/reportData';
 import { fmt } from '../utils/statistics';
 import { loadMailRecipients } from '../utils/mailRecipients';
@@ -104,6 +110,158 @@ function loadDefaultMeta(): ReportMetaInput {
   } catch {
     return init;
   }
+}
+
+/* ================= 邮件正文（报告全文） ================= */
+
+/** 差值文本：>0 带 + 号，保留两位小数 */
+function deltaStr(v: number): string {
+  return `${v > 0 ? '+' : ''}${fmt(v, 2)}`;
+}
+
+/** 单批次指标行（冠军 / 中位 / 最优共用格式） */
+function summaryRow(
+  label: string,
+  v: { eff: number; voc: number; jsc: number; ff: number; rs: number; rsh: number; vocff: number },
+  suffix = '',
+): string {
+  return `  ${label}${suffix}：PCE ${fmt(v.eff)}% | Voc ${fmt(v.voc)}V | Jsc ${fmt(v.jsc)}mA/cm² | FF ${fmt(v.ff)} | Rs ${fmt(v.rs)}Ω | Rsh ${fmt(v.rsh)}Ω | Voc·FF ${fmt(v.vocff)}V`;
+}
+
+/** 构建邮件正文：与 PDF 报告正文一致的全部内容（箱线图等图表除外，正文末尾注明见附件） */
+function buildReportEmailBody(meta: ReportMetaInput, data: ReportData): string {
+  const lines: string[] = [];
+  const hasText = (s: string | null | undefined) => !!s && !!s.trim();
+
+  /* 报告头 */
+  lines.push('钙钛矿器件验证对比分析报告');
+  lines.push('');
+  lines.push(`汇报人：${meta.reporter?.trim() || '—'}`);
+  lines.push(`汇报日期：${meta.report_date || '—'}`);
+  lines.push(
+    `参与批次：${data.totals.batches} 个（${data.groups.map((g) => g.batchId).join('、') || '—'}）`,
+  );
+  if (data.baseline) lines.push(`基准批次：${data.baseline.baselineBatchId}`);
+  lines.push(`测试记录：${data.totals.samples} 条（反扫 ${data.totals.reverse} 条）`);
+  lines.push(`有效测试记录：${data.totals.valid}/${data.totals.reverse}（符合口径反扫数 / 反扫总数）`);
+  lines.push('');
+
+  /* 报告总览 */
+  if (data.groups.length > 0) {
+    lines.push('【报告总览】');
+    lines.push(
+      '批次 | PCE冠军(%) | PCE中位(%) | Voc中位(V) | Jsc中位(mA/cm²) | FF | Voc·FF平均(V) | 判定',
+    );
+    for (const g of data.groups) {
+      const isBase = g.batchId === data.baseline?.baselineBatchId;
+      const verdict = data.baseline?.diffs.find((d) => d.batchId === g.batchId)?.verdict;
+      const cols = [
+        fmt(g.champion?.efficiency ?? NaN),
+        fmt(data.metricStats['efficiency'][g.batchId]?.median ?? NaN),
+        fmt(data.metricStats['voc_V'][g.batchId]?.median ?? NaN),
+        fmt(data.metricStats['jsc_mA_cm2'][g.batchId]?.median ?? NaN),
+        fmt(data.metricStats['ff'][g.batchId]?.median ?? NaN),
+        fmt(data.metricStats['vocff'][g.batchId]?.mean ?? NaN),
+      ].join(' | ');
+      lines.push(
+        `${isBase ? '⚑ ' : ''}${batchLabelOf(g.batchId)} | ${cols} | ${isBase ? '基准' : verdict ?? '—'}`,
+      );
+    }
+    lines.push('');
+    const overview = buildOverviewSummary(data);
+    if (overview) {
+      lines.push(overview);
+      lines.push('');
+    }
+  }
+
+  /* 一 ~ 三：文字章节 */
+  if (hasText(meta.research_purpose)) {
+    lines.push('一、研究目的与意义');
+    lines.push(meta.research_purpose!.trim());
+    lines.push('');
+  }
+  if (hasText(meta.process_method)) {
+    lines.push('二、过程与方法');
+    lines.push(meta.process_method!.trim());
+    lines.push('');
+  }
+  if (hasText(meta.key_parameters)) {
+    lines.push('三、关键工艺参数');
+    lines.push(meta.key_parameters!.trim());
+    lines.push('');
+  }
+
+  /* 四、实验数据 */
+  if (data.groups.length > 0) {
+    lines.push('四、实验数据');
+    lines.push(
+      `本节共 ${data.totals.samples} 条测试记录（其中反扫 ${data.totals.reverse} 条），全部统计均基于符合统计口径的有效测试记录 ${data.totals.valid} 条（口径：${criteriaTextShort(data.thresholds)}）。`,
+    );
+    lines.push('');
+
+    /* 4.5 汇总表 */
+    const summaryGroups = buildSummaryGroups(data);
+    if (summaryGroups.length > 0) {
+      lines.push('4.5 各批次关键参数汇总表（冠军 / 中位 / 最优）');
+      for (const g of summaryGroups) {
+        lines.push(`${batchLabelOf(g.batchId)}（有效 ${g.validCount}/${g.totalCount}）`);
+        if (g.champion) {
+          const c = g.champion;
+          lines.push(
+            `  冠军（${scanLabelOf(c.sample_name, g.batchId)}）：PCE ${fmt(c.efficiency)}% | Voc ${fmt(c.voc_V)}V | Jsc ${fmt(c.jsc_mA_cm2)}mA/cm² | FF ${fmt(c.ff)} | Rs ${fmt(c.rs_ohm)}Ω | Rsh ${fmt(c.rsh_ohm)}Ω | Voc·FF ${fmt(metricValue(c, 'vocff'))}V`,
+          );
+        } else {
+          lines.push('  无 PCE 测试数据');
+        }
+        lines.push(summaryRow('中位', g.median));
+        lines.push(summaryRow('最优', g.best));
+      }
+      lines.push('');
+    }
+
+    /* 4.6 Baseline 差值对比 */
+    if (data.baseline && data.baseline.diffs.length > 0) {
+      lines.push(`4.6 Baseline 差值对比（基准：${data.baseline.baselineBatchId}）`);
+      lines.push(
+        `⚑ ${data.baseline.baselineBatchId}（基准）：冠军 PCE ${fmt(data.baseline.baselineChampion)}% | 中位 PCE ${fmt(data.baseline.baselineMedian)}% | 平均 Voc·FF ${fmt(data.baseline.baselineVocffMean)}V`,
+      );
+      for (const d of data.baseline.diffs) {
+        lines.push(
+          `${d.batchId}：冠军 PCE ${fmt(d.champion)}%（Δ${deltaStr(d.championDelta)}）| 中位 PCE ${fmt(d.median)}%（Δ${deltaStr(d.medianDelta)}）| 平均 Voc·FF ${fmt(d.vocffMean)}V（Δ${deltaStr(d.vocffMeanDelta ?? NaN)}）| 判定：${d.verdict}`,
+        );
+      }
+      lines.push('');
+    }
+
+    /* 4.7 分析结论 */
+    if (data.baseline?.conclusion) {
+      lines.push('4.7 分析结论（Baseline 自动判定）');
+      lines.push(data.baseline.conclusion);
+      lines.push('');
+    }
+  }
+
+  /* 五 ~ 七：文字章节 */
+  if (hasText(meta.discussion)) {
+    lines.push('五、结果讨论');
+    lines.push(meta.discussion!.trim());
+    lines.push('');
+  }
+  if (hasText(meta.conclusion)) {
+    lines.push('六、研究结论');
+    lines.push(meta.conclusion!.trim());
+    lines.push('');
+  }
+  if (hasText(meta.next_steps)) {
+    lines.push('七、下一步计划');
+    lines.push(meta.next_steps!.trim());
+    lines.push('');
+  }
+
+  lines.push('（箱线图等图表内容见附件 Excel 报告，PDF 版可于系统内导出）');
+  lines.push('本报告由器件验证数据分析系统生成');
+  return lines.join('\n');
 }
 
 /* ================= 主组件 ================= */
@@ -299,7 +457,7 @@ export default function ReportEditor() {
   };
 
   /** 一键发送邮件：生成 Excel 附件 → 自动下载 → 打开默认邮件客户端
-   *  邮件正文为报告摘要文本（与 PDF 报告总览/结论一致），
+   *  邮件正文为 PDF 报告的全部内容（图表除外，见附件说明），
    *  用户需手动将已下载的 Excel 文件粘贴到邮件附件中。 */
   const handleSendEmail = async () => {
     if (!paperRef.current) return;
@@ -328,51 +486,9 @@ export default function ReportEditor() {
       a.click();
       URL.revokeObjectURL(url);
 
-      // 构建邮件正文（文本摘要）
-      const lines: string[] = [];
-      lines.push('钙钛矿器件验证对比分析报告');
-      lines.push('');
-      lines.push(`汇报人：${meta.reporter?.trim() || '—'}`);
-      lines.push(`汇报日期：${meta.report_date || '—'}`);
-      lines.push(`参与批次：${reportData.groups.map((g) => g.batchId).join('、')}`);
-      if (reportData.baseline) {
-        lines.push(`基准批次：${reportData.baseline.baselineBatchId}`);
-      }
-      lines.push(`测试记录：${reportData.totals.samples} 条（反扫 ${reportData.totals.reverse} 条）`);
-      lines.push(`有效测试记录：${reportData.totals.valid}/${reportData.totals.reverse}`);
-      lines.push('');
-
-      // 各批次关键指标
-      lines.push('【批次关键指标】');
-      for (const g of reportData.groups) {
-        const isBase = g.batchId === reportData.baseline?.baselineBatchId;
-        const prefix = isBase ? '⚑ ' : '  ';
-        const champEff = g.champion?.efficiency ?? 0;
-        const medianEff = reportData.metricStats['efficiency']?.[g.batchId]?.median ?? NaN;
-        const vocffMean = reportData.metricStats['vocff']?.[g.batchId]?.mean ?? NaN;
-        lines.push(`${prefix}${g.batchId}：冠军 PCE ${fmt(champEff)}% | 中位 PCE ${fmt(medianEff)}% | 平均 Voc·FF ${fmt(vocffMean)}`);
-      }
-      lines.push('');
-
-      // 判定结论
-      if (reportData.baseline && reportData.baseline.diffs.length > 0) {
-        const excellent = reportData.baseline.diffs.filter((d) => d.verdict === '优秀');
-        const failed = reportData.baseline.diffs.filter((d) => d.verdict !== '优秀');
-        const verdictClauses: string[] = [];
-        if (excellent.length > 0) {
-          verdictClauses.push(`优秀 ${excellent.length} 个（${excellent.map((d) => d.batchId).join('、')}）`);
-        }
-        if (failed.length > 0) {
-          verdictClauses.push(`不合格 ${failed.length} 个（${failed.map((d) => d.batchId).join('、')}）`);
-        }
-        lines.push(`【判定结论】以 ${reportData.baseline.baselineBatchId} 为基准的 ${reportData.baseline.diffs.length} 个对比批次中：${verdictClauses.join('，')}。`);
-      }
-      lines.push('');
-      lines.push('（Excel 附件为完整分析报告，PDF 版可于系统内导出）');
-      lines.push('本报告由器件验证数据分析系统生成');
-
+      // 邮件正文：PDF 报告全文
       const subject = `器件分析报告 - ${reportData.groups.map((g) => g.batchId).join(' vs ')}`;
-      const body = encodeURIComponent(lines.join('\n'));
+      const body = encodeURIComponent(buildReportEmailBody(meta, reportData));
       // 默认收件人：系统设置中增删，发送前可在飞书写信窗口中修改
       const recipients = loadMailRecipients().join(',');
       const mailto = `mailto:${recipients}?subject=${encodeURIComponent(subject)}&body=${body}`;

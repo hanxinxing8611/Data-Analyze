@@ -753,24 +753,6 @@ try {
     rowPageList.flat().every((p) => p.y >= -0.01 && p.y + p.h <= USABLE_MM + 0.01),
   );
 
-  /* 封面：独占首页，其后内容从第 2 页顶部开始 */
-  pages.length = 0;
-  pages.push([]);
-  const coverBlock = { ...mk('cover', USABLE_MM), kind: 'cover' };
-  blocksToPdf(
-    [coverBlock, mk('header', 36), mk('chart-1', 95)] as Parameters<typeof blocksToPdf>[0],
-    'test4.pdf',
-  );
-  check(
-    '封面独占首页（页 1 仅封面 1 次放置，内容从页 2 顶部开始）',
-    pages.length === 2 &&
-      pages[0].length === 1 &&
-      pages[0][0].y === 0 &&
-      Math.abs(pages[0][0].h - USABLE_MM) < 1 &&
-      pages[1][0]?.y === 0,
-    `实际 ${pages.length} 页，页 1 ${pages[0]?.length ?? 0} 次放置`,
-  );
-
   /* 页脚：底部保留区绘制报告日期与页码（第 X 页 / 共 Y 页） */
   pages.length = 0;
   pages.push([]);
@@ -785,23 +767,6 @@ try {
       Math.abs(pages[0][1].y - 289) < 0.5 &&
       Math.abs(pages[0][1].h - 8) < 0.5,
     `实际 ${pages[0]?.length ?? 0} 次放置`,
-  );
-
-  /* 封面页不绘制页脚（仅内容页有页脚） */
-  pages.length = 0;
-  pages.push([]);
-  blocksToPdf(
-    [coverBlock, mk('a', 50)] as Parameters<typeof blocksToPdf>[0],
-    'test6.pdf',
-    { footer: { date: '2026-08-22' } },
-  );
-  check(
-    '封面页不绘制页脚（页 1 仅封面，页 2 = 内容 + 页脚）',
-    pages.length === 2 &&
-      pages[0].length === 1 &&
-      pages[1].length === 2 &&
-      Math.abs(pages[1][1].y - 289) < 0.5,
-    `实际 ${pages.length} 页：页1 ${pages[0]?.length ?? 0} 次、页2 ${pages[1]?.length ?? 0} 次`,
   );
 } catch (e) {
   console.log(`  ⚠️ 跳过（Node 环境限制）：${e instanceof Error ? e.message : String(e)}`);

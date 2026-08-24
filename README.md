@@ -32,7 +32,7 @@
 ```bash
 npm install        # postinstall 在 Windows 本机自动处理 node_modules 解密
 npm run dev        # 开发服务器（地址带 /Data-Analyze/ 前缀）
-npm run build      # 构建门禁：类型检查 + 193 项数据断言 + 打包
+npm run build      # 构建门禁：类型检查 + 191 项数据断言 + 打包
 ```
 
 注意：`npm run build` 中的数据断言依赖 `data/input.txt`（真实数据，已按保密策略排除在仓库外），
