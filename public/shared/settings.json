@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-24T07:58:16.215Z",
+  "updatedAt": "2026-08-24T07:59:20.841Z",
   "criteria": {
     "verdictMode": "champion_and_median",
     "verdictThreshold": 0,
@@ -8,6 +8,7 @@
     "resistanceMin": 0
   },
   "mailRecipients": [
-    "xinxing.han@jingling-tech.com"
+    "xinxing.han@jingling-tech.com",
+    "jason@jingling-tech.com"
   ]
 }
