@@ -1,0 +1,283 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ================= 设计令牌：精密仪器风 ================= */
+:root {
+  /* 强调色（钴蓝 → 青蓝，呼应光伏/仪器示波器色系） */
+  --accent-50: #eef4ff;
+  --accent-100: #dbe7fe;
+  --accent-500: #3b82f6;
+  --accent-600: #2563eb;
+  --accent-700: #1d4ed8;
+  /* 深墨侧栏 */
+  --ink-900: #0a1020;
+  --ink-800: #0e1628;
+  /* 阴影 */
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -12px rgba(15, 23, 42, 0.1);
+  --shadow-card-hover: 0 2px 4px rgba(15, 23, 42, 0.05), 0 16px 32px -16px rgba(15, 23, 42, 0.16);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    color: #0f172a;
+    background-color: #eef1f6;
+    /* 纸感底色：极淡的对角渐变 + 顶部提亮，避免纯平灰 */
+    background-image:
+      radial-gradient(1200px 400px at 50% -100px, rgba(255, 255, 255, 0.55), transparent 70%),
+      linear-gradient(180deg, #f1f4f9 0%, #eef1f6 40%, #e9edf4 100%);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'tnum' 1; /* 全局表格数字，数据列对齐 */
+  }
+
+  /* 文本选区 */
+  ::selection {
+    background: rgba(37, 99, 235, 0.16);
+  }
+
+  /* 键盘可达性：统一焦点环 */
+  :focus-visible {
+    outline: 2px solid rgba(37, 99, 235, 0.55);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* 表单控件基础质感（与各页内联 focus:border-* 类互补） */
+  input[type='text'],
+  input[type='number'],
+  input[type='password'],
+  input[type='date'],
+  select,
+  textarea {
+    @apply rounded-md border border-slate-300/80 bg-white text-sm text-slate-800 shadow-sm transition-colors;
+  }
+  input[type='text']:focus,
+  input[type='number']:focus,
+  input[type='password']:focus,
+  input[type='date']:focus,
+  select:focus,
+  textarea:focus {
+    @apply border-blue-500 outline-none;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    @apply text-slate-400;
+  }
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    @apply cursor-not-allowed bg-slate-50 text-slate-400;
+  }
+
+  input[type='checkbox'] {
+    @apply accent-blue-600;
+  }
+}
+
+/* ================= 滚动条 ================= */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 9999px;
+  background-clip: padding-box;
+  background-color: rgba(100, 116, 139, 0.35);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(71, 85, 105, 0.55);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ================= 动画 ================= */
+
+/* 页面入场：路由切换时淡入上移 */
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-page-in {
+  animation: page-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 侧栏导航逐项入场 */
+@keyframes nav-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-nav-in {
+  animation: nav-in 0.36s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 减少动态偏好：关闭装饰性动画 */
+@media (prefers-reduced-motion: reduce) {
+  .animate-page-in,
+  .animate-nav-in {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ================= 数据表格（全局统一规范） ================= */
+/* 规则：宽度一致（100%）、内容水平垂直居中、字号统一 13px、行高自适应内容 */
+.data-table {
+  @apply w-full border-collapse text-[13px];
+}
+
+.data-table th {
+  @apply sticky top-0 z-10 whitespace-nowrap border-b border-slate-200 bg-slate-50/95 px-3 py-2.5 text-center align-middle font-semibold text-slate-500 backdrop-blur-sm;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.data-table td {
+  @apply whitespace-nowrap border-b border-slate-100 px-3 py-2.5 text-center align-middle text-slate-700;
+  font-size: 13px;
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table tbody tr {
+  transition: background-color 0.12s ease;
+}
+
+.data-table tbody tr:hover {
+  background-color: rgba(37, 99, 235, 0.045);
+}
+
+/* ================= 表格内容统一微软雅黑 ================= */
+/* 覆盖表格单元格上的 font-mono 等宽字体（批次号/数值列等），保证表格字体全局一致 */
+table .font-mono,
+table.font-mono {
+  font-family: 'Microsoft YaHei', '微软雅黑', 'PingFang SC', 'Hiragino Sans GB',
+    'Helvetica Neue', Arial, sans-serif;
+}
+
+/* ================= 报告模板（打印风格） ================= */
+
+/* 报告纸张：白色无阴影容器，供截图与预览（字体显式声明，确保 PDF 截图使用微软雅黑） */
+.report-paper {
+  font-family: 'Microsoft YaHei', '微软雅黑', 'PingFang SC', 'Hiragino Sans GB',
+    'Helvetica Neue', Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 报告表格：内容上下左右居中、字号统一、宽度 100%。
+ * 垂直居中策略（html2canvas 不支持 table-cell 的 vertical-align 布局）：
+ * - 单元格统一 line-height（22px）+ white-space:nowrap 保证单行 → 每行所有单元格等高，
+ *   文本在行盒内由 line-height 机制垂直居中（浏览器核心布局，截图如实反映）；
+ * - 汇总表批次列不用 rowspan：拆为冠军/中位/最优 3 行独立单元格，内容置于中位行
+ *   （= 3 行组的垂直中心），上下两行为空且隐藏朝向内容的分隔线，视觉上仍为一个整体大格。
+ * 边框采用 separate 分离模型 + 逐边绘制：html2canvas 对 border-collapse:collapse
+ * 的合并边框渲染存在错位/重影；分离模型下每条网格线仅由一侧单元格绘制，保证 1px 线精准 */
+.report-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  table-layout: auto;
+  width: 100%;
+}
+
+.report-table th,
+.report-table td {
+  border-right: 1px solid #cbd5e1;
+  border-bottom: 1px solid #cbd5e1;
+  padding: 7px 8px;
+  text-align: center !important;
+  vertical-align: middle !important; /* 预览生效；PDF 由等高行 + line-height 兜底 */
+  color: #334155;
+  line-height: 22px;
+  white-space: nowrap;
+}
+
+/* 行首列补左边框、表头顶行补上边框（配合分离模型拼出完整 1px 网格） */
+.report-table th:first-child,
+.report-table td:first-child {
+  border-left: 1px solid #cbd5e1;
+}
+
+.report-table thead th {
+  border-top: 1px solid #cbd5e1;
+  background: #f1f5f9;
+  font-weight: 600;
+  color: #475569;
+  padding: 8px 8px;
+}
+
+.report-table tbody tr:nth-child(even) {
+  background: #fafbfc;
+}
+
+/* 汇总表批次列（拆 3 行独立单元格，内容在中位行）：批次号 + 有效数两行完整显示；
+ * 上下空行隐藏朝向内容的分隔线，3 格视觉一体；列底色统一为白色避免斑马纹割裂 */
+.report-table td.batch-cell,
+.report-table td.batch-void-top,
+.report-table td.batch-void-bottom {
+  background: #ffffff;
+}
+
+.report-table td.batch-cell {
+  white-space: normal;
+  min-width: 96px;
+  line-height: 18px;
+  padding: 5px 8px;
+}
+
+/* 上空格与中位内容格均隐藏下边线（分离模型下横向网格线由上方单元格绘制），
+ * 3 格之间无分隔线；组底分隔线由下空格 batch-void-bottom 的下边线绘制 */
+.report-table td.batch-void-top,
+.report-table td.batch-mid {
+  border-bottom: none;
+}
+
+.report-table td.batch-void-bottom {
+  border-top: none;
+}
+
+/* 导出截图完整性：取消模板内省略号截断，长文本换行完整显示 */
+.report-paper .truncate {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* 汇总表口径列：允许换行（冠军样品名可能较长），保持垂直居中 */
+.report-table .wrap-cell {
+  white-space: normal;
+  min-width: 110px;
+  max-width: 170px;
+}

@@ -1,0 +1,8 @@
+node_modules
+dist
+*.local
+.DS_Store
+
+# 真实实验数据不入库（公开仓库保密策略）
+# 本地构建门禁（npm run build）依赖 data/input.txt 做数据断言，需开发者自备
+data/
