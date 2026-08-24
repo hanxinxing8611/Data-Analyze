@@ -73,7 +73,10 @@ export function StatCard({
       <span className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-blue-500/0 via-blue-500/70 to-cyan-400/0 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
       <div className="text-xs font-medium tracking-wide text-slate-400">{label}</div>
       <div className="mt-1.5 flex items-baseline gap-1">
-        <span className="font-mono text-[26px] font-semibold leading-none tracking-tight text-slate-900">
+        <span
+          className="text-[36px] font-semibold leading-none tracking-tight text-slate-900"
+          style={{ fontFamily: "'Century Gothic', 'Apple Gothic', 'Questrial', sans-serif" }}
+        >
           {value}
         </span>
         {unit && <span className="text-sm text-slate-400">{unit}</span>}

@@ -34,7 +34,10 @@ function StorageOverview() {
           className="rounded-xl border border-slate-100 bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
         >
           <div className="text-xs text-slate-400">{it.label}</div>
-          <div className="mt-1 font-mono text-xl font-semibold tabular-nums text-slate-800">
+          <div
+            className="mt-1 text-[36px] font-semibold leading-none tracking-tight text-slate-800"
+            style={{ fontFamily: "'Century Gothic', 'Apple Gothic', 'Questrial', sans-serif" }}
+          >
             {it.value}
             <span className="ml-0.5 text-xs font-normal text-slate-400">{it.unit}</span>
           </div>
