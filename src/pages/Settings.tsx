@@ -1,8 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { useData } from '../store/DataContext';
 import { useCriteria } from '../store/CriteriaContext';
-import { queryDashboardStats, resetDB } from '../database/db';
-import { exportDatabaseBackup, importDatabaseBackup, importSharedSnapshot } from '../database/backup';
 import { Button, Card, PageHeader } from '../components/ui';
 import Icon from '../components/layout/Icon';
 import {
@@ -26,7 +23,7 @@ import {
   type CloudSyncInfo,
 } from '../utils/cloudSettings';
 
-/** 系统设置访问密码（防误改，非安全加密） */
+/** 系统管理员密码（防误改，非安全加密） */
 const SETTINGS_PASSWORD = '000000';
 /** 解锁状态会话内有效（关闭标签页后失效），刷新页面不重复输入 */
 const UNLOCKED_KEY = 'dv-settings-unlocked';
@@ -93,7 +90,7 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
             系统设置已锁定
           </h2>
           <p className="mt-1.5 text-xs leading-5 text-slate-500">
-            统计口径等参数会影响全部报告统计结果，请输入访问密码
+            本页参数（统计口径、收件人）将云端共享给全团队，仅系统管理员可修改
           </p>
         </div>
         <input
@@ -106,7 +103,7 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
             setPwd(e.target.value);
             setError('');
           }}
-          placeholder="请输入密码"
+          placeholder="请输入管理员密码"
           className={`mt-6 w-full rounded-lg border px-4 py-2.5 text-center font-mono text-lg tracking-[0.5em] outline-none transition-colors ${
             error
               ? 'border-red-300 bg-red-50 focus:border-red-400'
@@ -118,7 +115,7 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
           type="submit"
           className="mt-5 w-full rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 py-2.5 text-sm font-medium text-white shadow-sm shadow-blue-600/25 transition-all duration-150 hover:to-blue-700 active:scale-[0.99]"
         >
-          解锁
+          管理员登录
         </button>
       </form>
     </div>
@@ -361,127 +358,6 @@ function CriteriaForm() {
             <Button onClick={handleSave}>保存口径</Button>
           </div>
         </div>
-      </div>
-    </Card>
-  );
-}
-
-/* ================= 数据库备份卡片 ================= */
-
-function BackupCard() {
-  const { refresh } = useData();
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState<'export' | 'import' | 'pull' | null>(null);
-  const [msg, setMsg] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
-
-  const summarize = (s: {
-    material_batch: number;
-    sample_record: number;
-    iv_curve_data: number;
-    report_metadata: number;
-  }) =>
-    `${s.material_batch} 批次 / ${s.sample_record} 样本 / ${s.iv_curve_data} 曲线点 / ${s.report_metadata} 报告模板`;
-
-  const handleExport = async () => {
-    setBusy('export');
-    setMsg(null);
-    try {
-      const summary = await exportDatabaseBackup();
-      setMsg({ tone: 'success', text: `备份已导出：${summarize(summary)}` });
-    } catch (e) {
-      setMsg({ tone: 'error', text: `导出失败：${e instanceof Error ? e.message : String(e)}` });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const handleFile = async (file: File) => {
-    const stats = queryDashboardStats();
-    const ok = window.confirm(
-      `将使用「${file.name}」替换当前全部数据\n` +
-        `（当前：${stats.totalBatches} 批次 / ${stats.totalSamples} 样本）。\n` +
-        '此操作会先清空现有数据再导入备份，确定继续吗？',
-    );
-    if (!ok) return;
-    setBusy('import');
-    setMsg(null);
-    try {
-      const summary = await importDatabaseBackup(file);
-      refresh();
-      setMsg({ tone: 'success', text: `备份已导入：${summarize(summary)}` });
-    } catch (e) {
-      setMsg({
-        tone: 'error',
-        text: `导入失败（数据未改动）：${e instanceof Error ? e.message : String(e)}`,
-      });
-    } finally {
-      setBusy(null);
-      if (fileRef.current) fileRef.current.value = '';
-    }
-  };
-
-  const handlePullShared = async () => {
-    const stats = queryDashboardStats();
-    const ok = window.confirm(
-      '将从站点共享数据快照（public/shared/data-latest.xlsx）拉取并替换当前全部数据\n' +
-        `（当前：${stats.totalBatches} 批次 / ${stats.totalSamples} 样本）。\n` +
-        '此操作会先清空现有数据再导入共享数据，确定继续吗？',
-    );
-    if (!ok) return;
-    setBusy('pull');
-    setMsg(null);
-    try {
-      const summary = await importSharedSnapshot();
-      refresh();
-      setMsg({ tone: 'success', text: `共享数据已拉取：${summarize(summary)}` });
-    } catch (e) {
-      setMsg({
-        tone: 'error',
-        text: `拉取失败（数据未改动）：${e instanceof Error ? e.message : String(e)}`,
-      });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  return (
-    <Card title="数据库备份" extra={<span className="text-[11px] text-slate-400">Excel 工作簿（.xlsx）</span>}>
-      <div className="space-y-4">
-        <p className="text-sm leading-6 text-slate-600">
-          导出全部数据（材料批次、样本记录、IV 曲线、报告文字模板）为 Excel 工作簿，
-          可用于定期备份或将数据迁移到其他设备；导入时会替换当前全部数据。
-          也可直接拉取维护者发布在站点上的共享数据快照。
-        </p>
-        <div className="flex flex-wrap items-center gap-3">
-          <Button onClick={handleExport} disabled={busy !== null}>
-            {busy === 'export' ? '导出中…' : '导出备份'}
-          </Button>
-          <Button variant="secondary" onClick={() => fileRef.current?.click()} disabled={busy !== null}>
-            {busy === 'import' ? '导入中…' : '导入备份'}
-          </Button>
-          <Button variant="secondary" onClick={handlePullShared} disabled={busy !== null}>
-            {busy === 'pull' ? '拉取中…' : '拉取共享数据'}
-          </Button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".xlsx"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void handleFile(f);
-            }}
-          />
-          {msg && (
-            <span className={`text-xs ${msg.tone === 'success' ? 'text-emerald-600' : 'text-red-600'}`}>
-              {msg.text}
-            </span>
-          )}
-        </div>
-        <p className="text-xs text-slate-400">
-          注意：仅支持本系统导出的 .xlsx 备份；旧版 .xls 文件请先用 Excel 另存为 .xlsx 再导入。
-          「拉取共享数据」依赖维护者发布的共享快照（未发布时会给出提示，本地数据不受影响）。
-        </p>
       </div>
     </Card>
   );
@@ -838,9 +714,7 @@ function CloudSyncCard() {
 /* ================= 设置页主体 ================= */
 
 export default function Settings() {
-  const { refresh } = useData();
   const [unlocked, setUnlocked] = useState(false);
-  const [cleared, setCleared] = useState(false);
 
   useEffect(() => {
     try {
@@ -850,20 +724,13 @@ export default function Settings() {
     }
   }, []);
 
-  const handleReset = async () => {
-    if (!window.confirm('确认清空全部数据？所有批次、样本与曲线数据将被删除，此操作不可撤销。')) {
-      return;
-    }
-    await resetDB();
-    refresh();
-    setCleared(true);
-    setTimeout(() => setCleared(false), 3000);
-  };
-
   if (!unlocked) {
     return (
       <div>
-        <PageHeader title="系统设置" description="数据管理与系统参数配置" />
+        <PageHeader
+          title="系统设置"
+          description="统计口径与云端共享配置（需系统管理员权限）"
+        />
         <PasswordGate onUnlock={() => setUnlocked(true)} />
       </div>
     );
@@ -871,12 +738,13 @@ export default function Settings() {
 
   return (
     <div>
-      <PageHeader title="系统设置" description="数据管理与系统参数配置" />
+      <PageHeader
+        title="系统设置"
+        description="统计口径与云端共享配置（需系统管理员权限）"
+      />
 
       <div className="space-y-6">
         <CriteriaForm />
-
-        <BackupCard />
 
         <MailRecipientsCard />
 
@@ -924,32 +792,6 @@ export default function Settings() {
               请使用上述脚本或手动方式。配置后点击「发送邮件」将直接打开飞书写信界面，
               报告主题与摘要正文自动填充；Excel 报告已同时下载，拖入写信窗口的附件区即可发送。
             </p>
-          </div>
-        </Card>
-
-        <Card title="数据存储">
-          <div className="space-y-3 text-sm text-slate-600">
-            <p>
-              数据以 SQLite 格式存储于浏览器 IndexedDB 中，全部在本地运行，不会上传到任何服务器。
-              每次数据变更后自动保存，关闭页面不会丢失数据。
-            </p>
-            <p className="text-xs text-slate-400">
-              注意：清除浏览器站点数据（Cookie / 站点数据）会同时删除已导入的数据库，请谨慎操作。
-            </p>
-          </div>
-        </Card>
-
-        <Card title="危险操作">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-slate-700">清空全部数据</p>
-              <p className="mt-0.5 text-xs text-slate-400">
-                删除所有材料批次、样本记录与 IV 曲线数据，数据库结构保留
-              </p>
-            </div>
-            <Button variant="danger" onClick={handleReset}>
-              {cleared ? '已清空' : '清空数据'}
-            </Button>
           </div>
         </Card>
 
