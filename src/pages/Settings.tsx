@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useCriteria } from '../store/CriteriaContext';
 import { Button, Card, PageHeader } from '../components/ui';
 import Icon from '../components/layout/Icon';
+import { usePermission } from '../utils/permissions';
 import {
   isValidEmail,
   loadMailRecipients,
@@ -10,8 +11,10 @@ import {
 import {
   applyCloudSettings,
   fetchCloudSettings,
+  loadAdminNames,
   loadCloudConfig,
   loadCloudSyncInfo,
+  saveAdminNames,
   saveCloudConfig,
   syncSettingsToCloud,
   type CloudConfig,
@@ -275,6 +278,7 @@ function CloudSyncCard() {
       const parts: string[] = [];
       if (applied.criteria) parts.push('统计口径');
       if (applied.recipients) parts.push('默认收件人');
+      if (applied.roles) parts.push('权限管理');
       setMsg({
         tone: 'success',
         text: `已应用云端设置（${parts.join('、') || '无共享项'}），页面即将刷新…`,
@@ -317,7 +321,7 @@ function CloudSyncCard() {
     <Card title="云端共享设置">
       <div className="space-y-4 text-sm text-slate-600">
         <p>
-          保存统计口径（报告生成页）/ 收件人时自动<b className="text-slate-800">同步到 GitHub 仓库</b>
+          保存统计口径（报告生成页）/ 收件人 / 权限配置时自动<b className="text-slate-800">同步到 GitHub 仓库</b>
           （shared/settings.json），其他工程师打开页面时自动拉取，全团队口径一致。
           无 Token 时保存仅本机生效。
         </p>
@@ -397,6 +401,15 @@ function CloudSyncCard() {
             />
             默认收件人
           </label>
+          <label className="flex items-center gap-1.5 text-[13px]">
+            <input
+              type="checkbox"
+              checked={cfg.shareRoles}
+              onChange={(e) => saveCfg({ shareRoles: e.target.checked })}
+              className="rounded text-blue-600"
+            />
+            权限管理
+          </label>
         </div>
 
         {/* 同步状态与操作 */}
@@ -455,10 +468,113 @@ function CloudSyncCard() {
   );
 }
 
+/* ================= 权限管理 ================= */
+
+function RoleManagerCard() {
+  const [names, setNames] = useState<string[]>(() => loadAdminNames());
+  const [newName, setNewName] = useState('');
+  const [msg, setMsg] = useState<{ tone: 'success' | 'error' | 'info'; text: string } | null>(null);
+
+  const addName = () => {
+    const n = newName.trim();
+    if (!n) return;
+    if (names.includes(n)) {
+      setMsg({ tone: 'error', text: `"${n}" 已在管理员列表中` });
+      return;
+    }
+    const next = [...names, n];
+    setNames(next);
+    saveAdminNames(next);
+    setNewName('');
+    setMsg({ tone: 'success', text: `已添加管理员 "${n}"` });
+    setTimeout(() => setMsg(null), 2000);
+  };
+
+  const removeName = (n: string) => {
+    const next = names.filter((x) => x !== n);
+    setNames(next);
+    saveAdminNames(next);
+    setMsg({ tone: 'info', text: `已移除管理员 "${n}"` });
+    setTimeout(() => setMsg(null), 2000);
+  };
+
+  return (
+    <Card title="权限管理">
+      <div className="space-y-4 text-sm text-slate-600">
+        <p>
+          管理员拥有<b className="text-slate-800">全部权限</b>（增删改验证计划、修改系统设置）；<br />
+          工程师仅可<b className="text-slate-800">查看</b>验证计划、任务统计与数据概览，无增删改和系统设置权限。<br />
+          <span className="text-xs text-slate-400">管理员列表为空时，全员拥有管理员权限（向后兼容）。</span>
+        </p>
+
+        {/* 当前管理员列表 */}
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-slate-500">当前管理员</label>
+          {names.length === 0 ? (
+            <p className="text-xs text-slate-400">（空 = 全员管理员，无权限限制）</p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {names.map((n) => (
+                <span
+                  key={n}
+                  className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700"
+                >
+                  {n}
+                  <button
+                    type="button"
+                    onClick={() => removeName(n)}
+                    className="ml-0.5 text-blue-400 hover:text-red-500"
+                    title="移除"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 添加管理员 */}
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addName()}
+            placeholder="输入工程师姓名"
+            className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition-colors focus:border-blue-500"
+          />
+          <Button variant="secondary" onClick={addName}>
+            添加
+          </Button>
+        </div>
+        <p className="text-xs text-slate-400">
+          管理员姓名需与验证计划中录入的工程师姓名完全一致，才能正确识别身份
+        </p>
+
+        {msg && (
+          <p
+            className={`text-xs ${
+              msg.tone === 'success'
+                ? 'text-emerald-600'
+                : msg.tone === 'error'
+                  ? 'text-red-500'
+                  : 'text-blue-600'
+            }`}
+          >
+            {msg.text}
+          </p>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 /* ================= 设置页主体 ================= */
 
 export default function Settings() {
   const [unlocked, setUnlocked] = useState(false);
+  const { canWrite } = usePermission();
 
   useEffect(() => {
     try {
@@ -467,6 +583,26 @@ export default function Settings() {
       // sessionStorage 不可用时保持锁定
     }
   }, []);
+
+  /* 工程师无权限访问系统设置 */
+  if (!canWrite) {
+    return (
+      <div>
+        <PageHeader
+          title="系统设置"
+          description="默认收件人与云端共享配置（需管理员权限）"
+        />
+        <Card>
+          <div className="flex items-center gap-3 rounded-lg border border-amber-100 bg-amber-50/50 px-4 py-3 text-sm text-amber-700">
+            <span className="text-base">🔒</span>
+            <span>
+              当前为<b>工程师</b>身份，无权限访问系统设置。如需修改配置，请联系管理员。
+            </span>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   if (!unlocked) {
     return (
@@ -491,6 +627,8 @@ export default function Settings() {
         <MailRecipientsCard />
 
         <CloudSyncCard />
+
+        <RoleManagerCard />
 
         <Card title="邮件发送设置">
           <div className="space-y-3 text-sm text-slate-600">

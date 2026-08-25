@@ -9,6 +9,31 @@ import {
   saveMailRecipients,
 } from './mailRecipients';
 
+/** 管理员列表本地存储 key */
+export const ADMIN_NAMES_STORAGE_KEY = 'dv-admin-names';
+
+/** 读取本地管理员列表 */
+export function loadAdminNames(): string[] {
+  try {
+    const raw = localStorage.getItem(ADMIN_NAMES_STORAGE_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return [];
+    return arr.filter((v): v is string => typeof v === 'string').map((v) => v.trim()).filter((v) => v.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/** 保存本地管理员列表 */
+export function saveAdminNames(names: string[]): void {
+  try {
+    localStorage.setItem(ADMIN_NAMES_STORAGE_KEY, JSON.stringify(names));
+  } catch {
+    /* 忽略 */
+  }
+}
+
 /* ================= 云端共享设置 =================
  *
  * 无后端架构下的「保存即云端共享」：
@@ -27,6 +52,8 @@ export interface CloudSettings {
   criteria?: CriteriaThresholds;
   /** 默认收件人（缺失表示不共享；[] 表示共享空列表） */
   mailRecipients?: string[];
+  /** 管理员工程师姓名列表（缺失表示不共享；[]=全员管理员，即无权限限制） */
+  adminNames?: string[];
   /** 云端最后更新时间（ISO 字符串） */
   updatedAt?: string;
 }
@@ -40,6 +67,8 @@ export interface CloudConfig {
   shareCriteria: boolean;
   /** 保存时是否共享默认收件人 */
   shareRecipients: boolean;
+  /** 保存时是否共享权限管理（管理员列表） */
+  shareRoles: boolean;
 }
 
 export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
@@ -48,6 +77,7 @@ export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
   token: '',
   shareCriteria: true,
   shareRecipients: true,
+  shareRoles: true,
 };
 
 /** 仓库中共享文件的路径（public/ 下随 Vite 部署，API 与静态回退两通道均可读） */
@@ -79,6 +109,7 @@ export function loadCloudConfig(): CloudConfig {
       token: typeof p.token === 'string' ? p.token : '',
       shareCriteria: p.shareCriteria !== false,
       shareRecipients: p.shareRecipients !== false,
+      shareRoles: p.shareRoles !== false,
     };
   } catch {
     return { ...DEFAULT_CLOUD_CONFIG };
@@ -136,6 +167,14 @@ export function parseCloudSettings(raw: string): CloudSettings | null {
             .filter((v) => v.length > 0)
         : [];
     }
+    if (p.adminNames !== undefined) {
+      out.adminNames = Array.isArray(p.adminNames)
+        ? p.adminNames
+            .filter((v): v is string => typeof v === 'string')
+            .map((v) => v.trim())
+            .filter((v) => v.length > 0)
+        : [];
+    }
     if (typeof p.updatedAt === 'string') out.updatedAt = p.updatedAt;
     return out;
   } catch {
@@ -155,6 +194,9 @@ export function collectCloudPayload(cfg: CloudConfig): CloudSettings {
   }
   if (cfg.shareRecipients) {
     payload.mailRecipients = loadMailRecipients();
+  }
+  if (cfg.shareRoles) {
+    payload.adminNames = loadAdminNames();
   }
   return payload;
 }
@@ -224,9 +266,10 @@ export async function fetchCloudSettings(): Promise<CloudSettings | null> {
 }
 
 /** 将云端设置写入本地（缺失字段跳过，保留本地值）；返回应用情况 */
-export function applyCloudSettings(cloud: CloudSettings): { criteria: boolean; recipients: boolean } {
+export function applyCloudSettings(cloud: CloudSettings): { criteria: boolean; recipients: boolean; roles: boolean } {
   let criteriaApplied = false;
   let recipientsApplied = false;
+  let rolesApplied = false;
   if (cloud.criteria) {
     try {
       localStorage.setItem(CRITERIA_STORAGE_KEY, JSON.stringify(cloud.criteria));
@@ -239,7 +282,11 @@ export function applyCloudSettings(cloud: CloudSettings): { criteria: boolean; r
     saveMailRecipients(cloud.mailRecipients);
     recipientsApplied = true;
   }
-  return { criteria: criteriaApplied, recipients: recipientsApplied };
+  if (cloud.adminNames) {
+    saveAdminNames(cloud.adminNames);
+    rolesApplied = true;
+  }
+  return { criteria: criteriaApplied, recipients: recipientsApplied, roles: rolesApplied };
 }
 
 /* ---------------- 推送 ---------------- */
@@ -300,7 +347,7 @@ export async function syncSettingsToCloud(): Promise<SyncResult> {
   const cfg = loadCloudConfig();
   if (!cfg.token) return { ok: false, message: 'not-configured' };
   const payload = collectCloudPayload(cfg);
-  if (!payload.criteria && !payload.mailRecipients) {
+  if (!payload.criteria && !payload.mailRecipients && !payload.adminNames) {
     return { ok: false, message: 'nothing' };
   }
   try {

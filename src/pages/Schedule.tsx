@@ -11,6 +11,7 @@ import {
 } from '../database/db';
 import { fetchCloudSchedule, pushCloudSchedule } from '../utils/cloudSchedule';
 import { computeTaskStats, pushCloudTaskStats } from '../utils/cloudTaskStats';
+import { usePermission } from '../utils/permissions';
 import { Button, Card, EmptyState, Loading, PageHeader, Badge } from '../components/ui';
 import GanttChart from '../components/charts/GanttChart';
 import type { ScheduleItem } from '../types';
@@ -228,6 +229,7 @@ export default function Schedule() {
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
   const [showReminder, setShowReminder] = useState(false);
+  const { canWrite, engineerName } = usePermission();
 
   useEffect(() => {
     if (!dbReady) return;
@@ -346,6 +348,7 @@ export default function Schedule() {
   /* 表单提交 */
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!canWrite) { setError('仅管理员可增改验证计划'); return; }
     setError('');
     if (!form.batch_id.trim()) { setError('请填写批次号'); return; }
     if (!form.material_type) { setError('请选择产品名称'); return; }
@@ -410,6 +413,7 @@ export default function Schedule() {
 
   /* 删除 */
   const handleDelete = async (id: number) => {
+    if (!canWrite) { setError('仅管理员可删除验证计划'); return; }
     if (!window.confirm('确定删除该验证计划条目？')) return;
     await deleteSchedule(id);
     setItems(querySchedules());
@@ -422,6 +426,7 @@ export default function Schedule() {
 
   /* 状态切换 */
   const handleStatus = async (item: ScheduleItem) => {
+    if (!canWrite) { setError('仅管理员可变更验证计划状态'); return; }
     const next: ScheduleItem['status'] =
       item.status === 'planned' ? 'in_progress' : item.status === 'in_progress' ? 'completed' : 'planned';
     await updateSchedule(item.id, { status: next });
@@ -572,28 +577,35 @@ export default function Schedule() {
                       </td>
                       <td>
                         <div className="flex items-center gap-1.5">
-                          <button
-                            className="text-xs text-blue-600 hover:underline"
-                            onClick={() => handleStatus(it)}
-                          >
-                            {it.status === 'planned'
-                              ? '开始'
-                              : it.status === 'in_progress'
-                                ? '完成'
-                                : '重置'}
-                          </button>
-                          <button
-                            className="text-xs text-slate-500 hover:underline"
-                            onClick={() => handleEdit(it)}
-                          >
-                            编辑
-                          </button>
-                          <button
-                            className="text-xs text-red-500 hover:underline"
-                            onClick={() => handleDelete(it.id)}
-                          >
-                            删除
-                          </button>
+                          {canWrite && (
+                            <>
+                              <button
+                                className="text-xs text-blue-600 hover:underline"
+                                onClick={() => handleStatus(it)}
+                              >
+                                {it.status === 'planned'
+                                  ? '开始'
+                                  : it.status === 'in_progress'
+                                    ? '完成'
+                                    : '重置'}
+                              </button>
+                              <button
+                                className="text-xs text-slate-500 hover:underline"
+                                onClick={() => handleEdit(it)}
+                              >
+                                编辑
+                              </button>
+                              <button
+                                className="text-xs text-red-500 hover:underline"
+                                onClick={() => handleDelete(it.id)}
+                              >
+                                删除
+                              </button>
+                            </>
+                          )}
+                          {!canWrite && (
+                            <span className="text-xs text-slate-400">只读</span>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -606,8 +618,9 @@ export default function Schedule() {
       </Card>
 
       {/* 新增/编辑表单 */}
-      <Card title={editId !== null ? '编辑验证计划' : '新增验证计划'} className="mt-4">
-        <form onSubmit={handleSubmit} className="space-y-4">
+      {canWrite ? (
+        <Card title={editId !== null ? '编辑验证计划' : '新增验证计划'} className="mt-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             {/* 批次号（手工录入） */}
             <div>
@@ -771,7 +784,17 @@ export default function Schedule() {
             )}
           </div>
         </form>
-      </Card>
+        </Card>
+      ) : (
+        <Card title="新增验证计划" className="mt-4">
+          <div className="flex items-center gap-3 rounded-lg border border-amber-100 bg-amber-50/50 px-4 py-3 text-sm text-amber-700">
+            <span className="text-base">🔒</span>
+            <span>
+              当前为<b>工程师</b>身份，仅可查看验证计划。如需增删改，请联系管理员。
+            </span>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

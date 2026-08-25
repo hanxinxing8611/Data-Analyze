@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import Icon from './Icon';
 import { useData } from '../../store/DataContext';
+import { usePermission } from '../../utils/permissions';
 
 const NAV_ITEMS = [
   { to: '/', label: '数据总览', icon: 'dashboard', end: true },
@@ -15,6 +16,7 @@ const NAV_ITEMS = [
 
 export default function Sidebar() {
   const { dbReady } = useData();
+  const { canWrite, engineerName } = usePermission();
 
   return (
     <aside
@@ -92,6 +94,25 @@ export default function Sidebar() {
           </NavLink>
         ))}
       </nav>
+
+      {/* 当前用户身份 */}
+      {engineerName && (
+        <div className="relative border-t border-white/[0.07] px-5 py-3">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/[0.08] text-xs font-bold text-slate-300">
+              {engineerName.charAt(0)}
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-slate-300 truncate">
+                {engineerName}
+              </div>
+              <div className={`text-[10px] font-medium ${canWrite ? 'text-blue-400' : 'text-slate-500'}`}>
+                {canWrite ? '管理员' : '工程师'}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 数据库状态 */}
       <div className="relative border-t border-white/[0.07] px-5 py-4">
