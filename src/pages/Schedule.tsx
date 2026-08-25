@@ -56,6 +56,26 @@ function saveEngineers(list: EngineerEntry[]): void {
   }
 }
 
+/* ---- 当前工程师（本地存储） ---- */
+
+const CURRENT_ENGINEER_KEY = 'dv-current-engineer';
+
+function loadCurrentEngineer(): string {
+  try {
+    return localStorage.getItem(CURRENT_ENGINEER_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function saveCurrentEngineer(name: string): void {
+  try {
+    localStorage.setItem(CURRENT_ENGINEER_KEY, name);
+  } catch {
+    /* 忽略 */
+  }
+}
+
 /* ---- 工作日计算 ---- */
 
 function isWeekend(date: Date): boolean {
@@ -100,31 +120,108 @@ function emptyForm(): {
   };
 }
 
-/* ---- 提醒邮件正文 ---- */
+/* ======================== 弹窗提醒组件 ======================== */
 
-function buildReminderText(items: ScheduleItem[]): string {
-  const lines = ['您好，以下器件验证报告已到期或即将到期，请及时提交：', ''];
-  for (const it of items) {
-    const overdue = it.status !== 'completed' && it.report_deadline < todayStr();
-    const tag = overdue ? '【逾期】' : '【今日到期】';
-    lines.push(
-      `${tag} ${it.batch_id}（${it.material_type}）— 截止日期：${it.report_deadline}，负责人：${it.engineer_name}`,
-    );
-  }
-  lines.push('');
-  lines.push('请登录器件验证系统 → 报告生成页提交报告。');
-  lines.push('本提醒由器件验证计划自动生成');
-  return lines.join('\n');
+function ReminderModal({
+  items,
+  currentEngineer,
+  onClose,
+}: {
+  items: ScheduleItem[];
+  currentEngineer: string;
+  onClose: () => void;
+}) {
+  const today = todayStr();
+  const filtered = currentEngineer
+    ? items.filter((it) => it.engineer_name === currentEngineer)
+    : items;
+
+  if (filtered.length === 0) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* 遮罩 */}
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      {/* 弹窗 */}
+      <div className="relative z-10 mx-4 w-full max-w-lg rounded-xl bg-white shadow-2xl">
+        {/* 标题栏 */}
+        <div className="flex items-center justify-between rounded-t-xl border-b border-slate-100 bg-amber-50 px-5 py-4">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-2.5 w-2.5 rounded-full bg-amber-500" />
+            <span className="text-base font-semibold text-amber-900">
+              验证报告提交提醒
+            </span>
+          </div>
+          <button
+            onClick={onClose}
+            className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            ×
+          </button>
+        </div>
+        {/* 内容 */}
+        <div className="max-h-[420px] overflow-auto px-5 py-4">
+          <p className="mb-3 text-sm text-slate-600">
+            {currentEngineer
+              ? `${currentEngineer}，以下 ${filtered.length} 项验证报告已到期或即将到期，请及时提交：`
+              : `以下 ${filtered.length} 项验证报告已到期或即将到期，请及时提交：`}
+          </p>
+          <div className="space-y-2.5">
+            {filtered.map((it) => {
+              const overdue = it.report_deadline < today;
+              return (
+                <div
+                  key={it.id}
+                  className={`rounded-lg border px-3.5 py-2.5 ${
+                    overdue ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50/50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm font-semibold text-slate-900">
+                        {it.batch_id}
+                      </span>
+                      <span className="text-xs text-slate-500">{it.material_type}</span>
+                    </div>
+                    <Badge tone={overdue ? 'red' : 'amber'}>
+                      {overdue ? '逾期' : '今日到期'}
+                    </Badge>
+                  </div>
+                  <div className="mt-1 flex items-center gap-3 text-xs text-slate-500">
+                    <span>负责人：{it.engineer_name}</span>
+                    <span>截止：{it.report_deadline}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        {/* 底部 */}
+        <div className="flex items-center justify-between rounded-b-xl border-t border-slate-100 bg-slate-50 px-5 py-3">
+          <span className="text-xs text-slate-400">
+            本提醒由验证计划系统自动生成
+          </span>
+          <Button variant="secondary" onClick={onClose}>
+            我知道了
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
+
+/* ======================== 主页面 ======================== */
 
 export default function Schedule() {
   const { dbReady, version } = useData();
   const [items, setItems] = useState<ScheduleItem[]>([]);
   const [engineers, setEngineers] = useState<EngineerEntry[]>([]);
+  const [currentEngineer, setCurrentEngineer] = useState('');
   const [form, setForm] = useState(emptyForm);
   const [editId, setEditId] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
+  const [showReminder, setShowReminder] = useState(false);
 
   useEffect(() => {
     if (!dbReady) return;
@@ -133,6 +230,7 @@ export default function Schedule() {
 
   useEffect(() => {
     setEngineers(loadEngineers());
+    setCurrentEngineer(loadCurrentEngineer());
   }, []);
 
   /* 逾期/到期提醒列表 */
@@ -142,6 +240,19 @@ export default function Schedule() {
       (it) => it.status !== 'completed' && it.report_deadline <= today,
     );
   }, [items]);
+
+  /* 按当前工程师过滤的提醒 */
+  const myDueItems = useMemo(() => {
+    if (!currentEngineer) return dueItems;
+    return dueItems.filter((it) => it.engineer_name === currentEngineer);
+  }, [dueItems, currentEngineer]);
+
+  /* 页面加载时自动弹出提醒 */
+  useEffect(() => {
+    if (dbReady && myDueItems.length > 0) {
+      setShowReminder(true);
+    }
+  }, [dbReady, myDueItems.length]);
 
   /* 工程师姓名输入：精确匹配已保存工程师时自动带出邮箱 */
   const handleEngineerName = (name: string) => {
@@ -160,6 +271,11 @@ export default function Schedule() {
       saveEngineers(next);
       return next;
     });
+    // 如果删除的是当前选择的工程师，同时清除选择
+    if (currentEngineer === name) {
+      setCurrentEngineer('');
+      saveCurrentEngineer('');
+    }
   };
 
   /* 提交时自动保存/更新工程师信息 */
@@ -261,20 +377,6 @@ export default function Schedule() {
     setItems(querySchedules());
   };
 
-  /* 发送提醒 */
-  const handleRemind = (single?: ScheduleItem) => {
-    const targets = single ? [single] : dueItems;
-    if (targets.length === 0) return;
-    const body = buildReminderText(targets);
-    const emails = targets.map((t) => t.engineer_email).filter(Boolean);
-    const recipients = [...new Set(emails)].join(',');
-    const subject = single
-      ? `器件验证报告提交提醒 - ${single.batch_id}（${single.material_type}）`
-      : `器件验证报告提交提醒 - ${targets.length} 项到期/逾期`;
-    const mailto = `mailto:${recipients}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.open(mailto, '_blank');
-  };
-
   if (!dbReady) return <Loading text="数据库初始化中…" />;
 
   /* 旧数据的产品名称可能不在固定选项中，编辑时动态补充显示 */
@@ -285,26 +387,68 @@ export default function Schedule() {
 
   return (
     <div>
+      {/* 弹窗提醒 */}
+      {showReminder && myDueItems.length > 0 && (
+        <ReminderModal
+          items={dueItems}
+          currentEngineer={currentEngineer}
+          onClose={() => setShowReminder(false)}
+        />
+      )}
+
       <PageHeader
         title="验证计划"
         description="器件验证任务安排与报告提交时间管理"
       />
 
-      {/* 到期提醒 */}
-      {dueItems.length > 0 && (
+      {/* 当前工程师选择器 */}
+      {engineers.length > 0 && (
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2.5">
+          <span className="text-xs font-medium text-slate-500">当前工程师：</span>
+          <select
+            value={currentEngineer}
+            onChange={(e) => {
+              const v = e.target.value;
+              setCurrentEngineer(v);
+              saveCurrentEngineer(v);
+            }}
+            className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-700"
+          >
+            <option value="">全部工程师</option>
+            {engineers.map((e) => (
+              <option key={e.name} value={e.name}>
+                {e.name}
+              </option>
+            ))}
+          </select>
+          {currentEngineer && (
+            <span className="text-xs text-slate-400">
+              （仅显示 {currentEngineer} 的提醒和任务）
+            </span>
+          )}
+          {myDueItems.length > 0 && !showReminder && (
+            <Button variant="secondary" onClick={() => setShowReminder(true)}>
+              查看提醒 ({myDueItems.length})
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* 到期提醒横幅 */}
+      {myDueItems.length > 0 && (
         <Card className="mb-4 border-amber-200 bg-amber-50" bodyClassName="py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="flex h-2 w-2 rounded-full bg-amber-500" />
               <span className="text-sm font-medium text-amber-800">
-                {dueItems.length} 项任务到期/逾期
+                {myDueItems.length} 项任务到期/逾期
               </span>
               <span className="text-xs text-amber-600">
-                {dueItems.map((it) => `${it.batch_id}（${it.engineer_name}）`).join('、')}
+                {myDueItems.map((it) => `${it.batch_id}（${it.engineer_name}）`).join('、')}
               </span>
             </div>
-            <Button variant="secondary" onClick={() => handleRemind()}>
-              发送提醒邮件
+            <Button variant="secondary" onClick={() => setShowReminder(true)}>
+              查看提醒详情
             </Button>
           </div>
         </Card>
@@ -389,12 +533,6 @@ export default function Schedule() {
                             onClick={() => handleDelete(it.id)}
                           >
                             删除
-                          </button>
-                          <button
-                            className="text-xs text-amber-600 hover:underline"
-                            onClick={() => handleRemind(it)}
-                          >
-                            提醒
                           </button>
                         </div>
                       </td>

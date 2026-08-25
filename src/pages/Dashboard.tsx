@@ -8,6 +8,82 @@ import { isValidDevice, metricValue } from '../report/reportData';
 import { Badge, Button, Card, EmptyState, Loading, PageHeader, StatCard } from '../components/ui';
 import type { BatchSummary, SampleRecord, ScheduleItem } from '../types';
 
+/* ---- 弹窗提醒 ---- */
+
+function ReminderModal({
+  items,
+  onClose,
+}: {
+  items: ScheduleItem[];
+  onClose: () => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative z-10 mx-4 w-full max-w-lg rounded-xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between rounded-t-xl border-b border-slate-100 bg-amber-50 px-5 py-4">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-2.5 w-2.5 rounded-full bg-amber-500" />
+            <span className="text-base font-semibold text-amber-900">
+              验证报告提交提醒
+            </span>
+          </div>
+          <button
+            onClick={onClose}
+            className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            ×
+          </button>
+        </div>
+        <div className="max-h-[420px] overflow-auto px-5 py-4">
+          <p className="mb-3 text-sm text-slate-600">
+            以下 {items.length} 项验证报告已到期或即将到期，请及时提交：
+          </p>
+          <div className="space-y-2.5">
+            {items.map((it) => {
+              const overdue = it.report_deadline < today;
+              return (
+                <div
+                  key={it.id}
+                  className={`rounded-lg border px-3.5 py-2.5 ${
+                    overdue ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50/50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm font-semibold text-slate-900">
+                        {it.batch_id}
+                      </span>
+                      <span className="text-xs text-slate-500">{it.material_type}</span>
+                    </div>
+                    <Badge tone={overdue ? 'red' : 'amber'}>
+                      {overdue ? '逾期' : '今日到期'}
+                    </Badge>
+                  </div>
+                  <div className="mt-1 flex items-center gap-3 text-xs text-slate-500">
+                    <span>负责人：{it.engineer_name}</span>
+                    <span>截止：{it.report_deadline}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="flex items-center justify-between rounded-b-xl border-t border-slate-100 bg-slate-50 px-5 py-3">
+          <span className="text-xs text-slate-400">
+            本提醒由验证计划系统自动生成
+          </span>
+          <Link to="/schedule">
+            <Button variant="secondary">前往验证计划</Button>
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { dbReady, version } = useData();
   const { thresholds } = useCriteria();
@@ -15,6 +91,7 @@ export default function Dashboard() {
   const [batches, setBatches] = useState<BatchSummary[]>([]);
   const [records, setRecords] = useState<SampleRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
+  const [showReminder, setShowReminder] = useState(false);
 
   useEffect(() => {
     if (!dbReady) return;
@@ -51,12 +128,24 @@ export default function Dashboard() {
     return schedules.filter((s) => s.status !== 'completed' && s.report_deadline <= today);
   }, [schedules]);
 
+  /* 页面加载时自动弹出提醒 */
+  useEffect(() => {
+    if (dbReady && dueSchedules.length > 0) {
+      setShowReminder(true);
+    }
+  }, [dbReady, dueSchedules.length]);
+
   if (!dbReady || !stats) return <Loading text="数据库初始化中…" />;
 
   const hasData = stats.totalSamples > 0;
 
   return (
     <div>
+      {/* 弹窗提醒 */}
+      {showReminder && dueSchedules.length > 0 && (
+        <ReminderModal items={dueSchedules} onClose={() => setShowReminder(false)} />
+      )}
+
       <PageHeader
         title="数据总览"
         description="器件验证数据概况与快捷入口"
@@ -84,9 +173,14 @@ export default function Dashboard() {
               {dueSchedules.map((s) => `${s.batch_id}（${s.engineer_name}）`).join('、')}
             </span>
           </div>
-          <Link to="/schedule">
-            <Button variant="secondary">查看验证计划</Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={() => setShowReminder(true)}>
+              查看提醒
+            </Button>
+            <Link to="/schedule">
+              <Button variant="secondary">查看验证计划</Button>
+            </Link>
+          </div>
         </div>
       )}
 
