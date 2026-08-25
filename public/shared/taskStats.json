@@ -1,5 +1,20 @@
 [
   {
+    "name": "党文秀",
+    "email": "",
+    "avgCycleDays": 3,
+    "cycleStd": 0,
+    "avgPce": 18.71,
+    "medPce": 18.5,
+    "maxPce": 19.68,
+    "totalTasks": 4,
+    "completedTasks": 0,
+    "overdueTasks": 0,
+    "batchCount": 4,
+    "pceDeviceCount": 6,
+    "updatedAt": "2026-08-25T09:42:07.743Z"
+  },
+  {
     "name": "覃军玉",
     "email": "",
     "avgCycleDays": 3,
@@ -12,7 +27,7 @@
     "overdueTasks": 0,
     "batchCount": 4,
     "pceDeviceCount": 6,
-    "updatedAt": "2026-08-25T09:40:53.899Z"
+    "updatedAt": "2026-08-25T09:42:07.743Z"
   },
   {
     "name": "汪海俊",
@@ -27,6 +42,6 @@
     "overdueTasks": 0,
     "batchCount": 4,
     "pceDeviceCount": 0,
-    "updatedAt": "2026-08-25T09:40:53.899Z"
+    "updatedAt": "2026-08-25T09:42:07.743Z"
   }
 ]
