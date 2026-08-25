@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useData } from '../store/DataContext';
 import { useCriteria } from '../store/CriteriaContext';
-import { queryBatches, queryDashboardStats, querySamples } from '../database/db';
+import { queryBatches, queryDashboardStats, querySamples, querySchedules } from '../database/db';
 import { fmt, median } from '../utils/statistics';
 import { isValidDevice, metricValue } from '../report/reportData';
 import { Badge, Button, Card, EmptyState, Loading, PageHeader, StatCard } from '../components/ui';
-import type { BatchSummary, SampleRecord } from '../types';
+import type { BatchSummary, SampleRecord, ScheduleItem } from '../types';
 
 export default function Dashboard() {
   const { dbReady, version } = useData();
@@ -14,12 +14,14 @@ export default function Dashboard() {
   const [stats, setStats] = useState<ReturnType<typeof queryDashboardStats> | null>(null);
   const [batches, setBatches] = useState<BatchSummary[]>([]);
   const [records, setRecords] = useState<SampleRecord[]>([]);
+  const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
 
   useEffect(() => {
     if (!dbReady) return;
     setStats(queryDashboardStats());
     setBatches(queryBatches());
     setRecords(querySamples());
+    setSchedules(querySchedules());
   }, [dbReady, version]);
 
   /* 各批次关键指标（PCE 冠军/中位、Voc*FF 平均），基于有效测试记录随口径实时重算，与报告页口径一致 */
@@ -43,6 +45,12 @@ export default function Dashboard() {
     return m;
   }, [batches, records, thresholds]);
 
+  /* 排产到期/逾期提醒 */
+  const dueSchedules = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return schedules.filter((s) => s.status !== 'completed' && s.report_deadline <= today);
+  }, [schedules]);
+
   if (!dbReady || !stats) return <Loading text="数据库初始化中…" />;
 
   const hasData = stats.totalSamples > 0;
@@ -63,6 +71,24 @@ export default function Dashboard() {
           </>
         }
       />
+
+      {/* 排产到期提醒横幅 */}
+      {dueSchedules.length > 0 && (
+        <div className="mb-4 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <span className="flex h-2 w-2 rounded-full bg-amber-500" />
+            <span className="text-sm font-medium text-amber-800">
+              {dueSchedules.length} 项器件验证报告到期/逾期
+            </span>
+            <span className="text-xs text-amber-600">
+              {dueSchedules.map((s) => `${s.batch_id}（${s.engineer_name}）`).join('、')}
+            </span>
+          </div>
+          <Link to="/schedule">
+            <Button variant="secondary">查看排产</Button>
+          </Link>
+        </div>
+      )}
 
       {!hasData ? (
         <Card>

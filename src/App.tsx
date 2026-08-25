@@ -8,6 +8,7 @@ import DataManagement from './pages/DataManagement';
 import DataStorage from './pages/DataStorage';
 import Comparison from './pages/Comparison';
 import ReportEditor from './pages/ReportEditor';
+import Schedule from './pages/Schedule';
 import Settings from './pages/Settings';
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
                 <Route path="/browser" element={<Navigate to="/data" replace />} />
                 <Route path="/comparison" element={<Comparison />} />
                 <Route path="/report" element={<ReportEditor />} />
+                <Route path="/schedule" element={<Schedule />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Route>

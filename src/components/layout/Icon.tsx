@@ -60,6 +60,14 @@ const PATHS: Record<string, ReactNode> = {
       <line x1="17" y1="16" x2="23" y2="16" />
     </>
   ),
+  calendar: (
+    <>
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </>
+  ),
   zap: (
     <>
       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />

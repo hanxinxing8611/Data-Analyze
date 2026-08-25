@@ -120,6 +120,22 @@ export interface SampleFilter {
   search?: string;
 }
 
+/* ================= 排产计划 ================= */
+
+/** 排产计划条目 */
+export interface ScheduleItem {
+  id: number;
+  batch_id: string;
+  material_type: string;
+  engineer_name: string;
+  engineer_email: string;
+  start_date: string; // YYYY-MM-DD
+  report_deadline: string; // YYYY-MM-DD（自动 = start_date 后第 2 个工作日）
+  status: 'planned' | 'in_progress' | 'completed';
+  notes: string | null;
+  created_at: string;
+}
+
 /* ================= 报告相关（Phase 3） ================= */
 
 /** 报告元数据（手工录入部分） */

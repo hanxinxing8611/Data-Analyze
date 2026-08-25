@@ -59,8 +59,9 @@ function BackupCard() {
     sample_record: number;
     iv_curve_data: number;
     report_metadata: number;
+    schedule: number;
   }) =>
-    `${s.material_batch} 批次 / ${s.sample_record} 样本 / ${s.iv_curve_data} 曲线点 / ${s.report_metadata} 报告模板`;
+    `${s.material_batch} 批次 / ${s.sample_record} 样本 / ${s.iv_curve_data} 曲线点 / ${s.report_metadata} 报告模板 / ${s.schedule} 排产`;
 
   const handleExport = async () => {
     setBusy('export');

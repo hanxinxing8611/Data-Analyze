@@ -1,5 +1,5 @@
 import initSqlJs from 'sql.js';
-import type { Database } from 'sql.js';
+import type { Database, SqlValue } from 'sql.js';
 import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
 import { SCHEMA_SQL } from './schema';
 import { migrateMaterialBatches } from './migrate';
@@ -13,6 +13,7 @@ import type {
   ReportMetadata,
   SampleFilter,
   SampleRecord,
+  ScheduleItem,
 } from '../types';
 
 /* sql.js 查询结果（exec 返回值的最小结构） */
@@ -382,6 +383,53 @@ export async function resetDB(): Promise<void> {
     DELETE FROM sample_record;
     DELETE FROM material_batch;
     DELETE FROM report_metadata;
+    DELETE FROM schedule;
   `);
+  await saveDB();
+}
+
+/* ---------------- 排产计划 ---------------- */
+
+/** 查询全部排产条目（按开始日期倒序） */
+export function querySchedules(): ScheduleItem[] {
+  if (!db) return [];
+  const res = db.exec(
+    `SELECT id, batch_id, material_type, engineer_name, engineer_email,
+            start_date, report_deadline, status, notes, created_at
+     FROM schedule ORDER BY start_date DESC`,
+  ) as unknown as QueryResult[];
+  return rowsToObjects<ScheduleItem>(res);
+}
+
+/** 新增排产条目 */
+export async function insertSchedule(item: Omit<ScheduleItem, 'id' | 'created_at'>): Promise<void> {
+  const database = await getDB();
+  database.run(
+    `INSERT INTO schedule (batch_id, material_type, engineer_name, engineer_email, start_date, report_deadline, status, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [item.batch_id, item.material_type, item.engineer_name, item.engineer_email, item.start_date, item.report_deadline, item.status, item.notes ?? null],
+  );
+  await saveDB();
+}
+
+/** 更新排产条目 */
+export async function updateSchedule(id: number, fields: Partial<Omit<ScheduleItem, 'id' | 'created_at'>>): Promise<void> {
+  const database = await getDB();
+  const sets: string[] = [];
+  const vals: SqlValue[] = [];
+  for (const [k, v] of Object.entries(fields)) {
+    sets.push(`${k} = ?`);
+    vals.push(v);
+  }
+  if (sets.length === 0) return;
+  vals.push(id);
+  database.run(`UPDATE schedule SET ${sets.join(', ')} WHERE id = ?`, vals);
+  await saveDB();
+}
+
+/** 删除排产条目 */
+export async function deleteSchedule(id: number): Promise<void> {
+  const database = await getDB();
+  database.run('DELETE FROM schedule WHERE id = ?', [id]);
   await saveDB();
 }

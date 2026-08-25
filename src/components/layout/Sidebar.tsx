@@ -5,6 +5,7 @@ import { useData } from '../../store/DataContext';
 const NAV_ITEMS = [
   { to: '/', label: '数据总览', icon: 'dashboard', end: true },
   { to: '/data', label: '数据管理', icon: 'database', end: false },
+  { to: '/schedule', label: '排产计划', icon: 'calendar', end: false },
   { to: '/storage', label: '数据存储', icon: 'storage', end: false },
   { to: '/comparison', label: '对比分析', icon: 'chart', end: false },
   { to: '/report', label: '报告生成', icon: 'file', end: false },

@@ -16,6 +16,7 @@ export const BACKUP_TABLES = [
   'sample_record',
   'iv_curve_data',
   'report_metadata',
+  'schedule',
 ] as const;
 
 /** 各表导入时必须存在的列（对应建表的 NOT NULL 约束） */
@@ -24,6 +25,7 @@ const REQUIRED_COLUMNS: Record<string, string[]> = {
   sample_record: ['batch_id', 'sample_name'],
   iv_curve_data: ['record_id'],
   report_metadata: ['report_date', 'reporter'],
+  schedule: ['batch_id', 'engineer_name', 'start_date', 'report_deadline'],
 };
 
 /** sql.js 查询结果最小结构 */
@@ -38,6 +40,7 @@ export interface BackupSummary {
   sample_record: number;
   iv_curve_data: number;
   report_metadata: number;
+  schedule: number;
 }
 
 /** 读取表结构：列名与声明类型（PRAGMA table_info） */
@@ -64,6 +67,7 @@ export function buildBackupWorkbook(database: Database): {
     sample_record: 0,
     iv_curve_data: 0,
     report_metadata: 0,
+    schedule: 0,
   };
 
   for (const table of BACKUP_TABLES) {
@@ -233,6 +237,11 @@ export function restoreFromWorkbook(
       database,
       'report_metadata',
     ),
+    schedule: parseTable(
+      workbook.getWorksheet('schedule'),
+      database,
+      'schedule',
+    ),
   };
 
   // 3. 数据完整性校验
@@ -335,5 +344,6 @@ export function restoreFromWorkbook(
     sample_record: parsed.sample_record.rows.length,
     iv_curve_data: parsed.iv_curve_data.rows.length,
     report_metadata: parsed.report_metadata.rows.length,
+    schedule: parsed.schedule.rows.length,
   };
 }
