@@ -220,6 +220,8 @@ export default function Schedule() {
   const { canWrite } = usePermission();
   /** 同步锁：防止并发推送（B3 防抖） */
   const syncLock = useRef(false);
+  /** 同步动画状态 */
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     if (!dbReady) return;
@@ -284,8 +286,9 @@ export default function Schedule() {
 
   /* 推送本地排产数据到云端，同时推送任务统计（B3 防抖 + B4 串行推送） */
   const syncToCloud = async () => {
-    if (syncLock.current) return; // B3: 防止并发推送
+    if (syncLock.current) return;
     syncLock.current = true;
+    setSyncing(true);
     try {
       const all = querySchedules();
       const payload = all.map(({ id, created_at, ...rest }) => rest);
@@ -314,6 +317,7 @@ export default function Schedule() {
       }
     } finally {
       syncLock.current = false;
+      setSyncing(false);
     }
   };
 
@@ -519,6 +523,12 @@ export default function Schedule() {
 
   return (
     <div>
+      <style>{`
+        @keyframes cloud-pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.7; transform: scale(1.08); }
+        }
+      `}</style>
       {/* 弹窗提醒 */}
       {showReminder && myDueItems.length > 0 && (
         <ReminderModal
@@ -532,20 +542,44 @@ export default function Schedule() {
         title="验证计划"
         description="器件验证任务安排与报告提交时间管理"
         actions={
-          <Button variant="secondary" onClick={async () => {
-            setMsg('正在同步…');
-            setError('');
-            await syncToCloud();
-            // syncToCloud 内部会设置 msg/error；若未更新说明无 Token 或静默返回
-            setTimeout(() => {
-              setMsg((prev) => {
-                if (prev === '正在同步…') return '';
-                return prev;
-              });
-            }, 500);
-          }}>
-            同步云端
-          </Button>
+          <button
+            onClick={async () => {
+              setMsg('正在同步…');
+              setError('');
+              await syncToCloud();
+              setTimeout(() => {
+                setMsg((prev) => {
+                  if (prev === '正在同步…') return '';
+                  return prev;
+                });
+              }, 500);
+            }}
+            disabled={syncing}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-60"
+            title="同步验证计划到云端"
+          >
+            {/* 云朵 SVG 图标 */}
+            <svg
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={syncing ? 'animate-[cloud-pulse_1.2s_ease-in-out_infinite]' : ''}
+            >
+              <path d="M17.5 19H9a4.5 4.5 0 1 1 0-9h.1A5.5 5.5 0 0 1 19 6.5a5.5 5.5 0 0 1 .5 10.98" />
+              {syncing && (
+                <>
+                  <path d="M12 2v2" className="animate-[spin_1.5s_linear_infinite]" style={{ transformOrigin: '12px 3px' }} />
+                  <path d="M12 2v2" className="animate-[spin_1.5s_linear_infinite_0.5s]" style={{ transformOrigin: '12px 3px', opacity: 0.5 }} />
+                </>
+              )}
+            </svg>
+            {syncing ? '同步中…' : '同步云端'}
+          </button>
         }
       />
 
@@ -708,20 +742,19 @@ export default function Schedule() {
       {/* 新增/编辑表单 */}
       {canWrite ? (
         <Card title={editId !== null ? '编辑验证计划' : '新增验证计划'} className="mt-4">
-          <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            {/* 批次号组（新增：4 个一组 + 基准单选；编辑：单批次） */}
-            <div className="col-span-2">
-              <label className="mb-1 block text-xs font-medium text-slate-600">
+          <form onSubmit={handleSubmit} className="space-y-3">
+            {/* 批次号组（新增：4 个一组紧凑排列 + 基准单选；编辑：单批次） */}
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-slate-600">
                 {editId !== null
                   ? '批次号'
-                  : `批次号（一组 ${BATCH_GROUP_SIZE} 个，至少填写 1 个）`}
+                  : `批次号（${BATCH_GROUP_SIZE} 个一组，至少填写 1 个）`}
               </label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
                 {(editId !== null ? [form.batches[0]] : form.batches).map((b, idx) => {
                   const i = editId !== null ? 0 : idx;
                   return (
-                    <div key={i} className="flex items-center gap-2">
+                    <div key={i} className="flex items-center gap-1">
                       <input
                         type="text"
                         value={b}
@@ -730,12 +763,12 @@ export default function Schedule() {
                           batches[i] = e.target.value;
                           setForm({ ...form, batches });
                         }}
-                        placeholder={`批次 ${i + 1}，例如：CB615W${i + 1}`}
-                        className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        placeholder={`批次${i + 1}`}
+                        className="w-[120px] rounded-md border border-slate-300 px-2 py-1.5 text-xs"
                       />
                       <label
-                        className="flex shrink-0 cursor-pointer select-none items-center gap-1 text-xs text-slate-500 hover:text-blue-600"
-                        title="将该批次设为基准"
+                        className="flex shrink-0 cursor-pointer select-none items-center gap-0.5 rounded px-1.5 py-1 text-[11px] text-slate-400 transition hover:bg-blue-50 hover:text-blue-600"
+                        title="设为基准批次"
                       >
                         <input
                           type="radio"
@@ -757,89 +790,84 @@ export default function Schedule() {
                 })}
               </div>
               <p className="mt-1 text-[11px] text-slate-400">
-                同组批次共享负责人、日期与备注；勾选「基准」可将该批次标记为基准批次（可留空不选）
+                同组批次共享负责人与日期；勾选「基准」标记基准批次
               </p>
             </div>
 
-            {/* 负责人（可输入 + 已保存建议） */}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">负责人</label>
-              <input
-                type="text"
-                list="engineer-name-list"
-                value={form.engineer_name}
-                onChange={(e) => setForm({ ...form, engineer_name: e.target.value })}
-                placeholder="输入姓名，可从已保存人员中选择"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-              <datalist id="engineer-name-list">
-                {engineers.map((e) => (
-                  <option key={e.name} value={e.name} />
-                ))}
-              </datalist>
-            </div>
+            <div className="grid grid-cols-4 gap-3">
+              {/* 负责人 */}
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">负责人</label>
+                <input
+                  type="text"
+                  list="engineer-name-list"
+                  value={form.engineer_name}
+                  onChange={(e) => setForm({ ...form, engineer_name: e.target.value })}
+                  placeholder="输入姓名"
+                  className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                />
+                <datalist id="engineer-name-list">
+                  {engineers.map((e) => (
+                    <option key={e.name} value={e.name} />
+                  ))}
+                </datalist>
+              </div>
 
-            {/* 开始日期 */}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">
-                验证计划开始日期
-              </label>
-              <input
-                type="date"
-                value={form.start_date}
-                onChange={(e) => handleStartDate(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-            </div>
+              {/* 开始日期 */}
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">开始日期</label>
+                <input
+                  type="date"
+                  value={form.start_date}
+                  onChange={(e) => handleStartDate(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                />
+              </div>
 
-            {/* 报告截止日期（默认开始+2个工作日，可手动修改） */}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">
-                报告截止日期
-              </label>
-              <input
-                type="date"
-                value={form.report_deadline}
-                onChange={(e) => {
-                  setDeadlineManual(true);
-                  setForm({ ...form, report_deadline: e.target.value });
-                }}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-              <div className="mt-1 flex items-center justify-between">
-                <span className="text-[11px] text-slate-400">
-                  默认为开始日期 + 3 个工作日，可手动修改
-                </span>
-                {deadlineManual && form.start_date && (
-                  <button
-                    type="button"
-                    className="text-[11px] text-blue-600 hover:underline"
-                    onClick={() => {
-                      setDeadlineManual(false);
-                      setForm((prev) => ({
-                        ...prev,
-                        report_deadline: addWorkingDays(prev.start_date, DEADLINE_WORKING_DAYS),
-                      }));
-                    }}
-                  >
-                    恢复默认
-                  </button>
-                )}
+              {/* 报告截止日期 */}
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">截止日期</label>
+                <input
+                  type="date"
+                  value={form.report_deadline}
+                  onChange={(e) => {
+                    setDeadlineManual(true);
+                    setForm({ ...form, report_deadline: e.target.value });
+                  }}
+                  className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                />
+                <div className="mt-0.5 flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400">+3工作日</span>
+                  {deadlineManual && form.start_date && (
+                    <button
+                      type="button"
+                      className="text-[10px] text-blue-600 hover:underline"
+                      onClick={() => {
+                        setDeadlineManual(false);
+                        setForm((prev) => ({
+                          ...prev,
+                          report_deadline: addWorkingDays(prev.start_date, DEADLINE_WORKING_DAYS),
+                        }));
+                      }}
+                    >
+                      恢复
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* 备注 */}
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">备注</label>
+                <input
+                  type="text"
+                  value={form.notes}
+                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                  placeholder="可选"
+                  className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                />
               </div>
             </div>
-
-            {/* 备注 */}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">备注</label>
-              <input
-                type="text"
-                value={form.notes}
-                onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                placeholder="可选备注"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-            </div>
-          </div>
 
           {/* 已保存负责人（自动记录，可删除） */}
           {engineers.length > 0 && (

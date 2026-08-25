@@ -2,21 +2,21 @@ import { useMemo } from 'react';
 import type { ScheduleItem } from '../../types';
 
 /** 甘特图颜色映射 */
-const STATUS_COLORS: Record<ScheduleItem['status'], { bar: string; text: string }> = {
-  planned: { bar: '#e2e8f0', text: '#64748b' },
-  in_progress: { bar: '#3b82f6', text: '#fff' },
-  completed: { bar: '#94a3b8', text: '#fff' },
+const STATUS_COLORS: Record<ScheduleItem['status'], { bar: string; barEnd: string; text: string }> = {
+  planned: { bar: '#cbd5e1', barEnd: '#94a3b8', text: '#475569' },
+  in_progress: { bar: '#3b82f6', barEnd: '#2563eb', text: '#fff' },
+  completed: { bar: '#94a3b8', barEnd: '#64748b', text: '#fff' },
 };
 
-/** 逾期红色（report_deadline < 今天 且 非 completed） */
-const OVERDUE_COLOR = { bar: '#ef4444', text: '#fff' };
+/** 逾期红色 */
+const OVERDUE_COLOR = { bar: '#ef4444', barEnd: '#dc2626', text: '#fff' };
 
 /** 今天日期字符串 YYYY-MM-DD */
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** 日期差天数（含首尾） */
+/** 日期差天数 */
 function dayDiff(a: string, b: string): number {
   return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000);
 }
@@ -28,14 +28,12 @@ function statusLabel(s: ScheduleItem['status']): string {
 
 interface Props {
   items: ScheduleItem[];
-  /** 对外可见宽度（默认 720） */
   width?: number;
 }
 
-export default function GanttChart({ items, width = 720 }: Props) {
+export default function GanttChart({ items, width = 760 }: Props) {
   const today = todayStr();
 
-  /* 计算日期范围（最早 start_date ~ 最晚 report_deadline，至少覆盖今天前后各 3 天） */
   const { dateRange, dayLabels, totalDays } = useMemo(() => {
     if (items.length === 0) {
       const d = new Date();
@@ -51,21 +49,18 @@ export default function GanttChart({ items, width = 720 }: Props) {
       if (it.start_date < minD) minD = it.start_date;
       if (it.report_deadline > maxD) maxD = it.report_deadline;
     }
-    // 左右各扩展 2 天留白
     const min = new Date(minD); min.setDate(min.getDate() - 2);
     const max = new Date(maxD); max.setDate(max.getDate() + 2);
     const days = Math.round((max.getTime() - min.getTime()) / 86400000) + 1;
     return { dateRange: [fmtDate(min), fmtDate(max)], dayLabels: genLabels(min, days), totalDays: days };
   }, [items, today]);
 
-  /* 按工程师分组（去重排序） */
   const engineers = useMemo(() => {
     const set = new Set<string>();
     for (const it of items) set.add(it.engineer_name);
     return Array.from(set).sort();
   }, [items]);
 
-  /* 工程师名下各任务条 */
   const engineerItems = useMemo(() => {
     const m = new Map<string, ScheduleItem[]>();
     for (const it of items) {
@@ -78,64 +73,114 @@ export default function GanttChart({ items, width = 720 }: Props) {
 
   if (items.length === 0) {
     return (
-      <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-400">
+      <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/50 text-sm text-slate-400">
         暂无验证计划，请添加新条目
       </div>
     );
   }
 
   // 布局参数
-  const padLeft = 100; // 工程师名宽度
-  const padTop = 32; // 顶部日期刻度
-  const rowH = 52; // 每行高度
-  const barH = 22; // 任务条高度
+  const padLeft = 108;
+  const padTop = 38;
+  const rowH = 56;
+  const barH = 26;
   const barYOff = (rowH - barH) / 2;
   const chartW = width - padLeft;
   const dayW = chartW / totalDays;
-  const totalH = padTop + engineers.length * rowH + 20;
+  const totalH = padTop + engineers.length * rowH + 16;
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-200">
+    <div className="overflow-x-auto rounded-lg">
       <svg
         viewBox={`0 0 ${width} ${totalH}`}
         width={width}
         height={totalH}
         className="block"
-        style={{ minWidth: width }}
+        style={{ minWidth: width, fontFamily: "Arial, 'Microsoft YaHei', sans-serif" }}
       >
+        {/* 渐变定义 */}
+        <defs>
+          <linearGradient id="gantt-bg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#f8fafc" />
+            <stop offset="100%" stopColor="#f1f5f9" />
+          </linearGradient>
+          {['planned', 'in_progress', 'completed', 'overdue'].map((key) => (
+            <linearGradient key={key} id={`gantt-bar-${key}`} x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor={
+                key === 'overdue' ? '#ef4444' : key === 'in_progress' ? '#3b82f6' : key === 'completed' ? '#94a3b8' : '#cbd5e1'
+              } />
+              <stop offset="100%" stopColor={
+                key === 'overdue' ? '#dc2626' : key === 'in_progress' ? '#1d4ed8' : key === 'completed' ? '#64748b' : '#94a3b8'
+              } />
+            </linearGradient>
+          ))}
+          <filter id="gantt-shadow" x="-4" y="-2" width="calc(100%+8)" height="calc(100%+6)">
+            <feDropShadow dx="0" dy="1" stdDeviation="1.5" floodColor="#0f172a" floodOpacity="0.08" />
+          </filter>
+        </defs>
+
+        {/* 顶部标题栏背景 */}
+        <rect x={0} y={0} width={width} height={padTop} fill="url(#gantt-bg)" rx={0} />
+        <line x1={0} y1={padTop} x2={width} y2={padTop} stroke="#e2e8f0" strokeWidth={1} />
+
         {/* 日期刻度 */}
-        <line x1={padLeft} y1={padTop} x2={width} y2={padTop} stroke="#e2e8f0" strokeWidth={1} />
         {dayLabels.map((d, i) => {
           const x = padLeft + i * dayW + dayW / 2;
           const isToday = d.date === today;
+          const isMonday = new Date(d.date + 'T00:00:00').getDay() === 1;
           return (
             <g key={d.date}>
+              {/* 周末浅色背景 */}
+              {(() => {
+                const dow = new Date(d.date + 'T00:00:00').getDay();
+                if (dow === 0 || dow === 6) {
+                  return (
+                    <rect
+                      x={padLeft + i * dayW}
+                      y={padTop}
+                      width={dayW}
+                      height={totalH - padTop}
+                      fill="#f8fafc"
+                      opacity={0.6}
+                    />
+                  );
+                }
+                return null;
+              })()}
+
               {/* 今日竖线 */}
               {isToday && (
-                <line
-                  x1={x}
-                  y1={padTop - 4}
-                  x2={x}
-                  y2={totalH - 4}
-                  stroke="#ef4444"
-                  strokeWidth={1.5}
-                  strokeDasharray="4 3"
-                />
+                <>
+                  <line
+                    x1={x}
+                    y1={padTop}
+                    x2={x}
+                    y2={totalH}
+                    stroke="#ef4444"
+                    strokeWidth={2}
+                    opacity={0.3}
+                  />
+                  <circle cx={x} cy={padTop - 8} r={3} fill="#ef4444" />
+                </>
               )}
+
+              {/* 日期标签 */}
               <text
                 x={x}
-                y={isToday ? 14 : 22}
+                y={isToday ? 16 : 22}
                 textAnchor="middle"
                 fontSize={isToday ? 11 : 10}
-                fontWeight={isToday ? 700 : 400}
-                fill={isToday ? '#ef4444' : '#94a3b8'}
+                fontWeight={isToday ? 700 : isMonday ? 500 : 400}
+                fill={isToday ? '#ef4444' : isMonday ? '#64748b' : '#94a3b8'}
               >
                 {d.label}
               </text>
+
+              {/* 今天标记 */}
               {isToday && (
                 <text
                   x={x}
-                  y={padTop - 8}
+                  y={padTop - 14}
                   textAnchor="middle"
                   fontSize={10}
                   fontWeight={700}
@@ -160,16 +205,28 @@ export default function GanttChart({ items, width = 720 }: Props) {
                 y={rowY}
                 width={width}
                 height={rowH}
-                fill={ei % 2 === 0 ? '#fafafa' : '#fff'}
+                fill={ei % 2 === 0 ? '#fafbfc' : '#fff'}
               />
-              {/* 工程师名 */}
+
+              {/* 水平分隔线 */}
+              <line
+                x1={padLeft}
+                y1={rowY + rowH}
+                x2={width}
+                y2={rowY + rowH}
+                stroke="#f1f5f9"
+                strokeWidth={1}
+              />
+
+              {/* 工程师名 - 左侧标签 */}
+              <rect x={4} y={rowY + 4} width={padLeft - 12} height={rowH - 8} rx={6} fill="#f1f5f9" />
               <text
-                x={padLeft - 8}
+                x={padLeft - 12}
                 y={rowY + rowH / 2 + 4}
                 textAnchor="end"
                 fontSize={12}
                 fontWeight={600}
-                fill="#1e293b"
+                fill="#334155"
               >
                 {eng}
               </text>
@@ -179,62 +236,61 @@ export default function GanttChart({ items, width = 720 }: Props) {
                 const startOff = dayDiff(dateRange[0], task.start_date);
                 const dur = dayDiff(task.start_date, task.report_deadline) + 1;
                 const x = padLeft + startOff * dayW;
-                const w = Math.max(dur * dayW, 4);
+                const w = Math.max(dur * dayW, 6);
                 const isOverdue = task.status !== 'completed' && task.report_deadline < today;
+                const colorKey = isOverdue ? 'overdue' : task.status;
                 const colors = isOverdue ? OVERDUE_COLOR : STATUS_COLORS[task.status];
 
                 return (
                   <g key={task.id}>
-                    {/* 任务条 */}
+                    {/* 任务条主体 */}
                     <rect
-                      x={x}
+                      x={x + 1}
                       y={rowY + barYOff}
-                      width={w}
+                      width={Math.max(w - 2, 4)}
                       height={barH}
-                      rx={4}
-                      fill={colors.bar}
+                      rx={6}
+                      fill={`url(#gantt-bar-${colorKey})`}
+                      filter="url(#gantt-shadow)"
+                    />
+                    {/* 亮边高光 */}
+                    <rect
+                      x={x + 2}
+                      y={rowY + barYOff + 1}
+                      width={Math.max(w - 4, 2)}
+                      height={4}
+                      rx={3}
+                      fill="white"
+                      opacity={0.2}
                     />
                     {/* 批次号文本 */}
                     <text
-                      x={x + 6}
+                      x={x + 8}
                       y={rowY + barYOff + barH / 2 + 4}
-                      fontSize={10}
-                      fontWeight={500}
+                      fontSize={11}
+                      fontWeight={600}
                       fill={colors.text}
+                      style={{ textShadow: '0 1px 2px rgba(0,0,0,0.15)' }}
                     >
                       {task.batch_id}
-                      {task.material_type ? ` ${task.material_type}` : ''}
                     </text>
-                    {/* 截止日期小标记 */}
-                    <line
-                      x1={padLeft + (startOff + dur - 1) * dayW + dayW / 2}
-                      y1={rowY + barYOff}
-                      x2={padLeft + (startOff + dur - 1) * dayW + dayW / 2}
-                      y2={rowY + barYOff + barH}
-                      stroke="#94a3b8"
-                      strokeWidth={1}
-                      strokeDasharray="2 2"
+
+                    {/* 截止日期菱形标记 */}
+                    <polygon
+                      points={`${x + w - 1},${rowY + barYOff + barH / 2} ${x + w + 6},${rowY + barYOff + barH / 2 - 4} ${x + w + 11},${rowY + barYOff + barH / 2} ${x + w + 6},${rowY + barYOff + barH / 2 + 4}`}
+                      fill={isOverdue ? '#ef4444' : '#94a3b8'}
+                      opacity={0.7}
                     />
+
                     {/* 逾期/状态标签 */}
-                    {(isOverdue || task.report_deadline === today) && (
-                      <text
-                        x={x + w + 4}
-                        y={rowY + barYOff + barH / 2 + 4}
-                        fontSize={9}
-                        fontWeight={600}
-                        fill={isOverdue ? '#ef4444' : '#f59e0b'}
-                      >
-                        {isOverdue ? '逾期' : '今日到期'}
-                      </text>
-                    )}
-                    {/* 状态小标签 */}
                     <text
-                      x={x + 6}
-                      y={rowY + barYOff + barH + 12}
+                      x={x + w + 16}
+                      y={rowY + barYOff + barH / 2 + 4}
                       fontSize={9}
-                      fill="#94a3b8"
+                      fontWeight={600}
+                      fill={isOverdue ? '#ef4444' : '#64748b'}
                     >
-                      {statusLabel(task.status)}
+                      {isOverdue ? '逾期' : task.status === 'completed' ? '' : statusLabel(task.status)}
                     </text>
                   </g>
                 );
