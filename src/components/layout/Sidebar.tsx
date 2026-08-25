@@ -110,11 +110,11 @@ export default function Sidebar() {
 
       {/* 当前用户身份（可切换，决定管理员/工程师权限） */}
       <div className="relative border-t border-white/[0.07] px-5 py-3">
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-col items-center gap-2">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-xs font-bold text-slate-300">
             {engineerName ? engineerName.charAt(0) : '?'}
           </div>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 w-full text-center">
             <select
               value={engineerName}
               onClick={() => setIdentityOptions(loadIdentityOptions())}
