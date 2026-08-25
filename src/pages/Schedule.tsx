@@ -98,17 +98,19 @@ function emptyForm(): {
   batch_id: string;
   material_type: string;
   engineer_name: string;
-  engineer_email: string;
   start_date: string;
+  report_deadline: string;
   status: ScheduleItem['status'];
   notes: string;
 } {
+  const today = todayStr();
   return {
     batch_id: '',
     material_type: '',
     engineer_name: '',
-    engineer_email: '',
-    start_date: todayStr(),
+    start_date: today,
+    // 截止日期默认 = 开始日期 + 2 个工作日（可手动修改）
+    report_deadline: addWorkingDays(today, 2),
     status: 'planned',
     notes: '',
   };
@@ -213,11 +215,13 @@ export default function Schedule() {
   const [engineers, setEngineers] = useState<EngineerEntry[]>([]);
   const [currentEngineer, setCurrentEngineer] = useState('');
   const [form, setForm] = useState(emptyForm);
+  /** 截止日期是否被手动修改过（手动修改后不再随开始日期自动重算） */
+  const [deadlineManual, setDeadlineManual] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
   const [showReminder, setShowReminder] = useState(false);
-  const { canWrite, engineerName } = usePermission();
+  const { canWrite } = usePermission();
 
   useEffect(() => {
     if (!dbReady) return;
@@ -293,13 +297,12 @@ export default function Schedule() {
     }
   };
 
-  /* 工程师姓名输入：精确匹配已保存工程师时自动带出邮箱 */
-  const handleEngineerName = (name: string) => {
-    const found = engineers.find((e) => e.name === name);
+  /* 开始日期变化：截止日期未手动修改过时自动跟随（开始+2 个工作日） */
+  const handleStartDate = (date: string) => {
     setForm((prev) => ({
       ...prev,
-      engineer_name: name,
-      engineer_email: found && found.email ? found.email : prev.engineer_email,
+      start_date: date,
+      report_deadline: deadlineManual ? prev.report_deadline : addWorkingDays(date, 2),
     }));
   };
 
@@ -340,21 +343,23 @@ export default function Schedule() {
     setError('');
     if (!form.batch_id.trim()) { setError('请填写批次号'); return; }
     if (!form.material_type) { setError('请选择产品名称'); return; }
-    if (!form.engineer_name.trim()) { setError('请填写工程师姓名'); return; }
-    if (!form.engineer_email.trim()) { setError('请填写工程师邮箱'); return; }
+    if (!form.engineer_name.trim()) { setError('请填写负责人'); return; }
     if (!form.start_date) { setError('请选择开始日期'); return; }
+    if (!form.report_deadline) { setError('请选择报告截止日期'); return; }
 
-    const deadline = addWorkingDays(form.start_date, 2);
+    /* 邮箱不再录入，自动沿用已保存负责人的邮箱（无则留空，保持数据兼容） */
+    const name = form.engineer_name.trim();
+    const email = engineers.find((en) => en.name === name)?.email ?? '';
 
     try {
       if (editId !== null) {
         await updateSchedule(editId, {
           batch_id: form.batch_id.trim(),
           material_type: form.material_type,
-          engineer_name: form.engineer_name.trim(),
-          engineer_email: form.engineer_email.trim(),
+          engineer_name: name,
+          engineer_email: email,
           start_date: form.start_date,
-          report_deadline: deadline,
+          report_deadline: form.report_deadline,
           status: form.status,
           notes: form.notes || null,
         });
@@ -363,17 +368,18 @@ export default function Schedule() {
         await insertSchedule({
           batch_id: form.batch_id.trim(),
           material_type: form.material_type,
-          engineer_name: form.engineer_name.trim(),
-          engineer_email: form.engineer_email.trim(),
+          engineer_name: name,
+          engineer_email: email,
           start_date: form.start_date,
-          report_deadline: deadline,
+          report_deadline: form.report_deadline,
           status: form.status,
           notes: form.notes || null,
         });
         setMsg('验证计划条目已添加');
       }
-      persistEngineer(form.engineer_name.trim(), form.engineer_email.trim());
+      persistEngineer(name, email);
       setForm(emptyForm());
+      setDeadlineManual(false);
       setEditId(null);
       setItems(querySchedules());
       syncToCloud();
@@ -390,11 +396,13 @@ export default function Schedule() {
       batch_id: item.batch_id,
       material_type: item.material_type,
       engineer_name: item.engineer_name,
-      engineer_email: item.engineer_email,
       start_date: item.start_date,
+      report_deadline: item.report_deadline,
       status: item.status,
       notes: item.notes || '',
     });
+    /* 已保存的截止日期与默认值不一致 → 视为手动指定，改开始日期时不覆盖 */
+    setDeadlineManual(item.report_deadline !== addWorkingDays(item.start_date, 2));
     setError('');
     setMsg('');
   };
@@ -454,10 +462,10 @@ export default function Schedule() {
         }
       />
 
-      {/* 工程师筛选（仅影响查看范围，登录身份请在左侧边栏切换） */}
+      {/* 负责人筛选（仅影响查看范围，登录身份请在左侧边栏切换） */}
       {engineers.length > 0 && (
         <div className="mb-4 flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2.5">
-          <span className="text-xs font-medium text-slate-500">筛选工程师：</span>
+          <span className="text-xs font-medium text-slate-500">筛选负责人：</span>
           <select
             value={currentEngineer}
             onChange={(e) => {
@@ -467,7 +475,7 @@ export default function Schedule() {
             }}
             className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-700"
           >
-            <option value="">全部工程师</option>
+            <option value="">全部负责人</option>
             {engineers.map((e) => (
               <option key={e.name} value={e.name}>
                 {e.name}
@@ -523,7 +531,7 @@ export default function Schedule() {
                 <tr>
                   <th>批次</th>
                   <th>产品名称</th>
-                  <th>工程师</th>
+                  <th>负责人</th>
                   <th>开始</th>
                   <th>截止</th>
                   <th>状态</th>
@@ -640,15 +648,15 @@ export default function Schedule() {
               </select>
             </div>
 
-            {/* 工程师（可输入 + 已保存建议） */}
+            {/* 负责人（可输入 + 已保存建议） */}
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">工程师姓名</label>
+              <label className="mb-1 block text-xs font-medium text-slate-600">负责人</label>
               <input
                 type="text"
                 list="engineer-name-list"
                 value={form.engineer_name}
-                onChange={(e) => handleEngineerName(e.target.value)}
-                placeholder="输入姓名，可从已保存工程师中选择"
+                onChange={(e) => setForm({ ...form, engineer_name: e.target.value })}
+                placeholder="输入姓名，可从已保存人员中选择"
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               />
               <datalist id="engineer-name-list">
@@ -656,18 +664,6 @@ export default function Schedule() {
                   <option key={e.name} value={e.name} />
                 ))}
               </datalist>
-            </div>
-
-            {/* 邮箱 */}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">工程师邮箱</label>
-              <input
-                type="email"
-                value={form.engineer_email}
-                onChange={(e) => setForm({ ...form, engineer_email: e.target.value })}
-                placeholder="例如：zhangsan@example.com"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
             </div>
 
             {/* 开始日期 */}
@@ -678,36 +674,45 @@ export default function Schedule() {
               <input
                 type="date"
                 value={form.start_date}
-                onChange={(e) => setForm({ ...form, start_date: e.target.value })}
+                onChange={(e) => handleStartDate(e.target.value)}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               />
             </div>
 
-            {/* 截止日期（自动计算，仅展示） */}
+            {/* 报告截止日期（默认开始+2个工作日，可手动修改） */}
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-600">
-                报告截止日期（自动）
+                报告截止日期
               </label>
               <input
-                type="text"
-                readOnly
-                value={form.start_date ? addWorkingDays(form.start_date, 2) : '—'}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500"
-              />
-            </div>
-
-            {/* 状态 */}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">状态</label>
-              <select
-                value={form.status}
-                onChange={(e) => setForm({ ...form, status: e.target.value as ScheduleItem['status'] })}
+                type="date"
+                value={form.report_deadline}
+                onChange={(e) => {
+                  setDeadlineManual(true);
+                  setForm({ ...form, report_deadline: e.target.value });
+                }}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="planned">计划中</option>
-                <option value="in_progress">进行中</option>
-                <option value="completed">已完成</option>
-              </select>
+              />
+              <div className="mt-1 flex items-center justify-between">
+                <span className="text-[11px] text-slate-400">
+                  默认为开始日期 + 2 个工作日，可手动修改
+                </span>
+                {deadlineManual && form.start_date && (
+                  <button
+                    type="button"
+                    className="text-[11px] text-blue-600 hover:underline"
+                    onClick={() => {
+                      setDeadlineManual(false);
+                      setForm((prev) => ({
+                        ...prev,
+                        report_deadline: addWorkingDays(prev.start_date, 2),
+                      }));
+                    }}
+                  >
+                    恢复默认
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* 备注 */}
@@ -723,11 +728,11 @@ export default function Schedule() {
             </div>
           </div>
 
-          {/* 已保存工程师（自动记录，可删除） */}
+          {/* 已保存负责人（自动记录，可删除） */}
           {engineers.length > 0 && (
             <div>
               <div className="mb-1.5 text-xs font-medium text-slate-600">
-                已保存工程师（提交时自动记录，点击 × 删除）
+                已保存负责人（提交时自动记录，点击 × 删除）
               </div>
               <div className="flex flex-wrap gap-2">
                 {engineers.map((e) => (
@@ -736,7 +741,6 @@ export default function Schedule() {
                     className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 py-1 pl-2.5 pr-1.5 text-xs text-slate-700"
                   >
                     <span className="font-medium">{e.name}</span>
-                    {e.email && <span className="text-slate-400">{e.email}</span>}
                     <button
                       type="button"
                       title={`删除 ${e.name}`}
@@ -764,6 +768,7 @@ export default function Schedule() {
                 onClick={() => {
                   setEditId(null);
                   setForm(emptyForm());
+                  setDeadlineManual(false);
                   setError('');
                 }}
               >
