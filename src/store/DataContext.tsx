@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { getDB } from '../database/db';
+import { getDB, replaceAllSchedules } from '../database/db';
+import { fetchCloudSchedule } from '../utils/cloudSchedule';
 
 interface DataContextValue {
   /** 数据库是否初始化完成 */
@@ -23,7 +24,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     getDB()
-      .then(() => setDbReady(true))
+      .then(async () => {
+        setDbReady(true);
+        // 启动时拉取云端验证计划数据（共享排产）
+        try {
+          const cloud = await fetchCloudSchedule();
+          if (cloud && cloud.length > 0) {
+            await replaceAllSchedules(cloud);
+            setVersion((v) => v + 1);
+          }
+        } catch {
+          // 云端无数据或网络失败，静默使用本地数据
+        }
+      })
       .catch((e) => {
         console.error('数据库初始化失败', e);
         setError(e instanceof Error ? e.message : String(e));

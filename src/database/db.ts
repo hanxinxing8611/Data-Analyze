@@ -433,3 +433,17 @@ export async function deleteSchedule(id: number): Promise<void> {
   database.run('DELETE FROM schedule WHERE id = ?', [id]);
   await saveDB();
 }
+
+/** 全量替换验证计划数据（用于云端同步：清空本地表后批量插入云端数据） */
+export async function replaceAllSchedules(items: Array<Omit<ScheduleItem, 'id' | 'created_at'>>): Promise<void> {
+  const database = await getDB();
+  database.run('DELETE FROM schedule');
+  for (const item of items) {
+    database.run(
+      `INSERT INTO schedule (batch_id, material_type, engineer_name, engineer_email, start_date, report_deadline, status, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [item.batch_id, item.material_type, item.engineer_name, item.engineer_email, item.start_date, item.report_deadline, item.status, item.notes ?? null],
+    );
+  }
+  await saveDB();
+}

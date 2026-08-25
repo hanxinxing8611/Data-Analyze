@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useData } from '../store/DataContext';
+import { useCriteria } from '../store/CriteriaContext';
 import {
   querySchedules,
+  querySamples,
   insertSchedule,
   updateSchedule,
   deleteSchedule,
+  replaceAllSchedules,
 } from '../database/db';
+import { fetchCloudSchedule, pushCloudSchedule } from '../utils/cloudSchedule';
+import { computeTaskStats, pushCloudTaskStats } from '../utils/cloudTaskStats';
 import { Button, Card, EmptyState, Loading, PageHeader, Badge } from '../components/ui';
 import GanttChart from '../components/charts/GanttChart';
 import type { ScheduleItem } from '../types';
@@ -214,6 +219,7 @@ function ReminderModal({
 
 export default function Schedule() {
   const { dbReady, version } = useData();
+  const { thresholds } = useCriteria();
   const [items, setItems] = useState<ScheduleItem[]>([]);
   const [engineers, setEngineers] = useState<EngineerEntry[]>([]);
   const [currentEngineer, setCurrentEngineer] = useState('');
@@ -253,6 +259,49 @@ export default function Schedule() {
       setShowReminder(true);
     }
   }, [dbReady, myDueItems.length]);
+
+  /* 页面挂载时从云端拉取最新验证计划（其他工程师可能已更新） */
+  useEffect(() => {
+    if (!dbReady) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const cloud = await fetchCloudSchedule();
+        if (!cloud || cancelled) return;
+        if (cloud.length > 0) {
+          await replaceAllSchedules(cloud);
+          setItems(querySchedules());
+        }
+      } catch {
+        // 静默
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [dbReady]);
+
+  /* 推送本地排产数据到云端，同时推送任务统计 */
+  const syncToCloud = async () => {
+    const all = querySchedules();
+    const payload = all.map(({ id, created_at, ...rest }) => rest);
+    const result = await pushCloudSchedule(payload);
+    if (result.ok) {
+      setMsg('已同步云端');
+      setTimeout(() => setMsg(''), 3000);
+    } else if (result.message === 'not-configured') {
+      // 未配置 Token，静默（仅本地操作）
+    } else {
+      setError(`云端同步失败：${result.message}`);
+    }
+
+    // 同步推送任务统计（基于当前本地样本数据计算）
+    try {
+      const samples = querySamples();
+      const stats = computeTaskStats(all, samples, thresholds);
+      await pushCloudTaskStats(stats);
+    } catch {
+      // 任务统计推送失败不影响主流程
+    }
+  };
 
   /* 工程师姓名输入：精确匹配已保存工程师时自动带出邮箱 */
   const handleEngineerName = (name: string) => {
@@ -336,6 +385,7 @@ export default function Schedule() {
       setForm(emptyForm());
       setEditId(null);
       setItems(querySchedules());
+      syncToCloud();
       setTimeout(() => setMsg(''), 3000);
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存失败');
@@ -363,6 +413,7 @@ export default function Schedule() {
     if (!window.confirm('确定删除该验证计划条目？')) return;
     await deleteSchedule(id);
     setItems(querySchedules());
+    syncToCloud();
     if (editId === id) {
       setEditId(null);
       setForm(emptyForm());
@@ -375,6 +426,7 @@ export default function Schedule() {
       item.status === 'planned' ? 'in_progress' : item.status === 'in_progress' ? 'completed' : 'planned';
     await updateSchedule(item.id, { status: next });
     setItems(querySchedules());
+    syncToCloud();
   };
 
   if (!dbReady) return <Loading text="数据库初始化中…" />;
@@ -399,6 +451,14 @@ export default function Schedule() {
       <PageHeader
         title="验证计划"
         description="器件验证任务安排与报告提交时间管理"
+        actions={
+          <Button variant="secondary" onClick={async () => {
+            setMsg('正在同步…');
+            await syncToCloud();
+          }}>
+            同步云端
+          </Button>
+        }
       />
 
       {/* 当前工程师选择器 */}

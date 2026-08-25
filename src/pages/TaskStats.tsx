@@ -2,50 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useData } from '../store/DataContext';
 import { useCriteria } from '../store/CriteriaContext';
 import { querySchedules, querySamples, queryBatches } from '../database/db';
-import { isValidDevice } from '../report/reportData';
-import { median } from '../utils/statistics';
+import { fetchCloudTaskStats, computeTaskStats, type CloudTaskStat } from '../utils/cloudTaskStats';
 import { Card, Badge, Loading, PageHeader, EmptyState } from '../components/ui';
 import type { ScheduleItem, SampleRecord, BatchSummary } from '../types';
-
-/* ========== 工作日计算 ========== */
-
-function isWeekend(date: Date): boolean {
-  const d = date.getDay();
-  return d === 0 || d === 6;
-}
-
-function workingDaysBetween(start: string, end: string): number {
-  const s = new Date(start);
-  const e = new Date(end);
-  let count = 0;
-  const d = new Date(s);
-  while (d <= e) {
-    if (!isWeekend(d)) count++;
-    d.setDate(d.getDate() + 1);
-  }
-  return count;
-}
-
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-/* ========== 工程师统计 ========== */
-
-interface EngineerStats {
-  name: string;
-  email: string;
-  /** 验证周期：每项计划 start→deadline 工作日数 */
-  cycleDays: number[];
-  /** PCE 效率：该工程师负责批次中所有有效器件的效率值 */
-  pceValues: number[];
-  /** 报告及时性：已完成 / 总数 */
-  totalTasks: number;
-  completedTasks: number;
-  overdueTasks: number;
-  /** 验证批次数量 */
-  batchCount: number;
-}
 
 /* ========== 页面组件 ========== */
 
@@ -55,6 +14,8 @@ export default function TaskStats() {
   const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
   const [samples, setSamples] = useState<SampleRecord[]>([]);
   const [batches, setBatches] = useState<BatchSummary[]>([]);
+  const [cloudStats, setCloudStats] = useState<CloudTaskStat[] | null>(null);
+  const [fromCloud, setFromCloud] = useState(false);
 
   useEffect(() => {
     if (!dbReady) return;
@@ -63,75 +24,29 @@ export default function TaskStats() {
     setBatches(queryBatches());
   }, [dbReady, version]);
 
-  /* 按工程师聚合统计 */
-  const stats = useMemo(() => {
-    const today = todayStr();
-    const map = new Map<string, EngineerStats>();
-
-    // 建立批次→工程师映射（从 schedule 表）
-    const batchEngineers = new Map<string, Set<string>>();
-    for (const s of schedules) {
-      if (!batchEngineers.has(s.batch_id)) {
-        batchEngineers.set(s.batch_id, new Set());
-      }
-      batchEngineers.get(s.batch_id)!.add(s.engineer_name);
-    }
-
-    // 初始化工程师统计
-    for (const s of schedules) {
-      if (!map.has(s.engineer_name)) {
-        map.set(s.engineer_name, {
-          name: s.engineer_name,
-          email: s.engineer_email,
-          cycleDays: [],
-          pceValues: [],
-          totalTasks: 0,
-          completedTasks: 0,
-          overdueTasks: 0,
-          batchCount: 0,
-        });
-      }
-      const st = map.get(s.engineer_name)!;
-      st.totalTasks++;
-      if (s.status === 'completed') st.completedTasks++;
-      if (s.status !== 'completed' && s.report_deadline < today) st.overdueTasks++;
-
-      // 验证周期
-      const days = workingDaysBetween(s.start_date, s.report_deadline);
-      if (days > 0) st.cycleDays.push(days);
-    }
-
-    // 验证批次数量（去重）
-    const engineerBatches = new Map<string, Set<string>>();
-    for (const s of schedules) {
-      if (!engineerBatches.has(s.engineer_name)) {
-        engineerBatches.set(s.engineer_name, new Set());
-      }
-      engineerBatches.get(s.engineer_name)!.add(s.batch_id);
-    }
-    for (const [name, bSet] of engineerBatches) {
-      if (map.has(name)) {
-        map.get(name)!.batchCount = bSet.size;
-      }
-    }
-
-    // PCE 效率：按有效器件统计
-    const validSamples = samples.filter((r) => isValidDevice(r, thresholds));
-    for (const r of validSamples) {
-      if (r.efficiency == null) continue;
-      const engineers = batchEngineers.get(r.batch_id);
-      if (!engineers) continue;
-      for (const eng of engineers) {
-        if (map.has(eng)) {
-          map.get(eng)!.pceValues.push(r.efficiency);
+  /* 拉取云端任务统计（优先使用云端预计算数据） */
+  useEffect(() => {
+    if (!dbReady) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const cloud = await fetchCloudTaskStats();
+        if (!cancelled && cloud && cloud.length > 0) {
+          setCloudStats(cloud);
+          setFromCloud(true);
         }
+      } catch {
+        // 云端无数据，回退本地计算
       }
-    }
+    })();
+    return () => { cancelled = true; };
+  }, [dbReady]);
 
-    return Array.from(map.values()).sort((a, b) =>
-      a.name.localeCompare(b.name, 'zh'),
-    );
-  }, [schedules, samples, thresholds]);
+  /* 统计数据：优先云端，本地计算为回退 */
+  const stats = useMemo(() => {
+    if (fromCloud && cloudStats && cloudStats.length > 0) return cloudStats;
+    return computeTaskStats(schedules, samples, thresholds);
+  }, [fromCloud, cloudStats, schedules, samples, thresholds]);
 
   if (!dbReady) return <Loading text="数据库初始化中…" />;
 
@@ -159,7 +74,15 @@ export default function TaskStats() {
 
   return (
     <div>
-      <PageHeader title="任务统计" description="工程师工作效率、质量、执行力与负荷统计" />
+      <PageHeader
+        title="任务统计"
+        description="工程师工作效率、质量、执行力与负荷统计"
+      />
+      {fromCloud && (
+        <div className="-mt-4 mb-4">
+          <Badge tone="blue">云端数据</Badge>
+        </div>
+      )}
 
       {/* 总览卡片 */}
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -209,41 +132,12 @@ export default function TaskStats() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {stats.map((st) => {
-                const avgCycle =
-                  st.cycleDays.length > 0
-                    ? (st.cycleDays.reduce((a, b) => a + b, 0) / st.cycleDays.length).toFixed(1)
-                    : '—';
-                // 标准差用于判断稳定性
-                const cycleStd =
-                  st.cycleDays.length > 1
-                    ? Math.sqrt(
-                        st.cycleDays.reduce(
-                          (sum, d) =>
-                            sum +
-                            Math.pow(
-                              d -
-                                st.cycleDays.reduce((a, b) => a + b, 0) /
-                                  st.cycleDays.length,
-                              2,
-                            ),
-                          0,
-                        ) /
-                          st.cycleDays.length,
-                      )
-                    : 0;
+                const avgCycle = st.avgCycleDays != null ? st.avgCycleDays.toFixed(1) : '—';
+                const cycleStd = st.cycleStd;
 
-                const avgPce =
-                  st.pceValues.length > 0
-                    ? (st.pceValues.reduce((a, b) => a + b, 0) / st.pceValues.length).toFixed(2)
-                    : '—';
-                const medPce =
-                  st.pceValues.length > 0
-                    ? median(st.pceValues).toFixed(2)
-                    : '—';
-                const maxPce =
-                  st.pceValues.length > 0
-                    ? Math.max(...st.pceValues).toFixed(2)
-                    : '—';
+                const avgPce = st.avgPce != null ? st.avgPce.toFixed(2) : '—';
+                const medPce = st.medPce != null ? st.medPce.toFixed(2) : '—';
+                const maxPce = st.maxPce != null ? st.maxPce.toFixed(2) : '—';
 
                 const completeRate =
                   st.totalTasks > 0
@@ -277,7 +171,7 @@ export default function TaskStats() {
                         {avgCycle}
                       </span>
                       <span className="ml-1 text-xs text-slate-400">天</span>
-                      {cycleStd > 0 && (
+                      {cycleStd != null && cycleStd > 0 && (
                         <div className="text-[10px] text-slate-400">
                           波动 ±{cycleStd.toFixed(1)} 天
                         </div>
@@ -372,13 +266,10 @@ export default function TaskStats() {
         <Card title="效率对比" className="mt-4" bodyClassName="pb-2">
           <div className="space-y-3">
             {stats
-              .filter((st) => st.pceValues.length > 0)
+              .filter((st) => st.avgPce != null)
               .map((st) => {
-                const avgPce =
-                  st.pceValues.reduce((a, b) => a + b, 0) /
-                  st.pceValues.length;
-                const maxBarWidth = 80; // percentage
-                // 基准线 20%
+                const avgPce = st.avgPce!;
+                const maxBarWidth = 80;
                 const barPct = Math.min((avgPce / 25) * 100, maxBarWidth);
                 return (
                   <div key={st.name} className="flex items-center gap-3">
@@ -398,7 +289,7 @@ export default function TaskStats() {
                       </div>
                     </div>
                     <span className="w-12 text-right text-xs text-slate-400">
-                      {st.pceValues.length} 器件
+                      {st.pceDeviceCount} 器件
                     </span>
                   </div>
                 );
