@@ -72,7 +72,7 @@
     "engineer_email": "",
     "start_date": "2026-08-25",
     "report_deadline": "2026-08-27",
-    "status": "planned",
+    "status": "in_progress",
     "notes": null,
     "is_baseline": 0
   },
@@ -83,7 +83,7 @@
     "engineer_email": "",
     "start_date": "2026-08-25",
     "report_deadline": "2026-08-27",
-    "status": "planned",
+    "status": "in_progress",
     "notes": null,
     "is_baseline": 1
   },
@@ -94,7 +94,7 @@
     "engineer_email": "",
     "start_date": "2026-08-25",
     "report_deadline": "2026-08-27",
-    "status": "planned",
+    "status": "in_progress",
     "notes": null,
     "is_baseline": 0
   },
