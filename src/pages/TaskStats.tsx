@@ -1,73 +1,61 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useData } from '../store/DataContext';
 import { useCriteria } from '../store/CriteriaContext';
-import { querySchedules, querySamples, queryBatches, mergeSchedules } from '../database/db';
-import { fetchCloudTaskStats, computeTaskStats, type CloudTaskStat } from '../utils/cloudTaskStats';
+import { mergeSchedules } from '../database/db';
+import { fetchCloudTaskStats, type CloudTaskStat } from '../utils/cloudTaskStats';
 import { fetchCloudSchedule } from '../utils/cloudSchedule';
+import { criteriaTextShort } from '../report/reportData';
 import { Card, Badge, Loading, PageHeader, EmptyState } from '../components/ui';
-import type { ScheduleItem, SampleRecord, BatchSummary } from '../types';
+import type { ScheduleItem } from '../types';
 
 /* ========== 页面组件 ========== */
 
 export default function TaskStats() {
-  const { dbReady, version } = useData();
+  const { dbReady } = useData();
   const { thresholds } = useCriteria();
-  const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
-  const [samples, setSamples] = useState<SampleRecord[]>([]);
-  const [batches, setBatches] = useState<BatchSummary[]>([]);
   const [cloudStats, setCloudStats] = useState<CloudTaskStat[] | null>(null);
-  const [fromCloud, setFromCloud] = useState(false);
+  const [cloudSchedules, setCloudSchedules] = useState<ScheduleItem[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (!dbReady) return;
-    setSchedules(querySchedules());
-    setSamples(querySamples());
-    setBatches(queryBatches());
-  }, [dbReady, version]);
-
-  /* A4: 拉取云端验证计划同步本地（确保统计数据最新） */
+  /* 仅从云端拉取数据：验证计划 + 任务统计（不使用本地 samples/schedules） */
   useEffect(() => {
     if (!dbReady) return;
     let cancelled = false;
     void (async () => {
+      setLoading(true);
       try {
-        const cloud = await fetchCloudSchedule();
-        if (!cancelled && cloud && cloud.length > 0) {
-          await mergeSchedules(cloud);
-          setSchedules(querySchedules());
+        // 并行拉取云端验证计划和任务统计
+        const [scheduleRes, statsRes] = await Promise.all([
+          fetchCloudSchedule(),
+          fetchCloudTaskStats(),
+        ]);
+
+        if (cancelled) return;
+
+        // 验证计划：存入 cloudSchedules 用于逾期计算，同时合并到本地 DB（供其他页面使用）
+        if (scheduleRes && scheduleRes.length > 0) {
+          setCloudSchedules(scheduleRes as ScheduleItem[]);
+          // 合并到本地 DB（不影响 TaskStats 展示，仅供 Dashboard/Schedule 页面使用）
+          try { await mergeSchedules(scheduleRes); } catch { /* 静默 */ }
+        }
+
+        // 任务统计：仅使用云端预计算数据
+        if (statsRes && statsRes.length > 0) {
+          setCloudStats(statsRes);
         }
       } catch {
-        // 静默
+        // 网络失败，静默
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
   }, [dbReady]);
 
-  /* 拉取云端任务统计（优先使用云端预计算数据） */
-  useEffect(() => {
-    if (!dbReady) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const cloud = await fetchCloudTaskStats();
-        if (!cancelled && cloud && cloud.length > 0) {
-          setCloudStats(cloud);
-          setFromCloud(true);
-        }
-      } catch {
-        // 云端无数据，回退本地计算
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [dbReady]);
+  /* 统计数据：仅云端 */
+  const stats = useMemo(() => cloudStats ?? [], [cloudStats]);
 
-  /* 统计数据：优先云端，本地计算为回退 */
-  const stats = useMemo(() => {
-    if (fromCloud && cloudStats && cloudStats.length > 0) return cloudStats;
-    return computeTaskStats(schedules, samples, thresholds);
-  }, [fromCloud, cloudStats, schedules, samples, thresholds]);
-
-  if (!dbReady) return <Loading text="数据库初始化中…" />;
+  if (!dbReady || loading) return <Loading text="正在从云端拉取统计数据…" />;
 
   if (stats.length === 0) {
     return (
@@ -76,24 +64,24 @@ export default function TaskStats() {
         <Card>
           <EmptyState
             icon="chart"
-            title="暂无统计数据"
-            description="请先在「验证计划」页添加验证计划条目，然后再回来查看统计"
+            title="暂无云端统计数据"
+            description="请先在「验证计划」页添加验证计划并同步到云端，然后再回来查看统计"
           />
         </Card>
       </div>
     );
   }
 
-  /* A1: 卡片数据统一从 stats 汇总 */
+  /* 卡片数据统一从云端 stats 汇总 */
   const totalBatches = stats.reduce((sum, s) => sum + s.batchCount, 0);
   const totalTasks = stats.reduce((sum, s) => sum + s.totalTasks, 0);
   const totalCompleted = stats.reduce((sum, s) => sum + s.completedTasks, 0);
   const completionRate = totalTasks > 0 ? (totalCompleted / totalTasks) * 100 : 0;
 
-  /* A3: 逾期数实时计算（用当前日期重算，不依赖云端快照） */
+  /* 逾期数实时计算（基于云端验证计划 + 当前日期，不依赖云端快照） */
   const today = new Date().toISOString().slice(0, 10);
   const getRealOverdue = (engineerName: string) =>
-    schedules.filter((s) => s.engineer_name === engineerName && s.status !== 'completed' && s.report_deadline < today).length;
+    cloudSchedules.filter((s) => s.engineer_name === engineerName && s.status !== 'completed' && s.report_deadline < today).length;
 
   /* 进度条色阶 */
   function progressColor(ratio: number): string {
@@ -108,11 +96,10 @@ export default function TaskStats() {
         title="任务统计"
         description="工程师工作效率、质量、执行力与负荷统计"
       />
-      {fromCloud && (
-        <div className="-mt-4 mb-4">
-          <Badge tone="blue">云端数据</Badge>
-        </div>
-      )}
+      {/* 数据来源标识 */}
+      <div className="-mt-4 mb-4">
+        <Badge tone="blue">云端数据</Badge>
+      </div>
 
       {/* 总览卡片（A1: 数据统一从 stats 汇总，内容居中，数字 Arial 36px） */}
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -227,16 +214,16 @@ export default function TaskStats() {
                       {typeof avgPce === 'string' && avgPce !== '—' && (
                         <Badge
                           tone={
-                            parseFloat(avgPce) >= 20
+                            parseFloat(avgPce) >= thresholds.pceMin + 5
                               ? 'green'
-                              : parseFloat(avgPce) >= 15
+                              : parseFloat(avgPce) >= thresholds.pceMin
                                 ? 'blue'
                                 : 'amber'
                           }
                         >
-                          {parseFloat(avgPce) >= 20
+                          {parseFloat(avgPce) >= thresholds.pceMin + 5
                             ? '优秀'
-                            : parseFloat(avgPce) >= 15
+                            : parseFloat(avgPce) >= thresholds.pceMin
                               ? '良好'
                               : '一般'}
                         </Badge>
@@ -297,7 +284,7 @@ export default function TaskStats() {
         <div className="border-t border-slate-100 px-5 py-2.5">
           <p className="text-[11px] leading-relaxed text-slate-400">
             <strong>验证周期</strong>：验证计划开始至报告截止的工作日天数（平均值），反映工作效率；
-            <strong>PCE平均效率</strong>：该工程师负责批次中所有有效器件的PCE均值，反映工作质量（口径与「报告生成」页一致）；
+            <strong>PCE平均效率</strong>：该工程师负责批次中所有有效测试记录的PCE均值，反映工作质量（{criteriaTextShort(thresholds)}）；
             <strong>报告及时性</strong>：已完成任务占比，反映执行力；
             <strong>验证批次</strong>：该工程师负责的验证批次数量，≥5个标记为高负荷。
           </p>
@@ -339,7 +326,7 @@ export default function TaskStats() {
               })}
           </div>
           <div className="mt-3 border-t border-slate-50 pt-3 text-center text-[10px] text-slate-400">
-            仅统计有效器件（PCE≥15% / FF≥0.5 / Rs&gt;0 / Rsh&gt;0），基准线 20% PCE
+            {criteriaTextShort(thresholds)}
           </div>
         </Card>
       )}
