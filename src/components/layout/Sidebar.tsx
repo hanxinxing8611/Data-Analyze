@@ -1,7 +1,12 @@
+import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import Icon from './Icon';
 import { useData } from '../../store/DataContext';
-import { usePermission } from '../../utils/permissions';
+import {
+  loadIdentityOptions,
+  setCurrentEngineer,
+  usePermission,
+} from '../../utils/permissions';
 
 const NAV_ITEMS = [
   { to: '/', label: '数据总览', icon: 'dashboard', end: true },
@@ -17,6 +22,9 @@ const NAV_ITEMS = [
 export default function Sidebar() {
   const { dbReady } = useData();
   const { canWrite, engineerName } = usePermission();
+  const [identityOptions, setIdentityOptions] = useState<string[]>(() =>
+    loadIdentityOptions(),
+  );
 
   return (
     <aside
@@ -95,24 +103,37 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* 当前用户身份 */}
-      {engineerName && (
-        <div className="relative border-t border-white/[0.07] px-5 py-3">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/[0.08] text-xs font-bold text-slate-300">
-              {engineerName.charAt(0)}
-            </div>
-            <div className="min-w-0">
-              <div className="text-xs font-medium text-slate-300 truncate">
-                {engineerName}
-              </div>
-              <div className={`text-[10px] font-medium ${canWrite ? 'text-blue-400' : 'text-slate-500'}`}>
-                {canWrite ? '管理员' : '工程师'}
-              </div>
+      {/* 当前用户身份（可切换，决定管理员/工程师权限） */}
+      <div className="relative border-t border-white/[0.07] px-5 py-3">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-xs font-bold text-slate-300">
+            {engineerName ? engineerName.charAt(0) : '?'}
+          </div>
+          <div className="min-w-0 flex-1">
+            <select
+              value={engineerName}
+              onClick={() => setIdentityOptions(loadIdentityOptions())}
+              onChange={(e) => setCurrentEngineer(e.target.value)}
+              title="切换当前身份（姓名需与管理员列表一致才具备管理员权限）"
+              className="w-full cursor-pointer appearance-none truncate rounded-md border border-white/10 bg-white/[0.05] px-2 py-1 text-xs font-medium text-slate-200 outline-none transition-colors hover:border-white/20 focus:border-blue-500/60"
+            >
+              <option value="">选择身份…</option>
+              {identityOptions.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <div
+              className={`mt-1 text-[10px] font-medium ${
+                canWrite ? 'text-blue-400' : 'text-slate-500'
+              }`}
+            >
+              {canWrite ? '管理员 · 拥有全部权限' : '工程师 · 仅可查看'}
             </div>
           </div>
         </div>
-      )}
+      </div>
 
       {/* 数据库状态 */}
       <div className="relative border-t border-white/[0.07] px-5 py-4">

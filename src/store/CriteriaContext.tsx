@@ -6,6 +6,7 @@ import {
   type CriteriaThresholds,
 } from '../report/reportData';
 import { applyCloudSettings, fetchCloudSettings } from '../utils/cloudSettings';
+import { notifyPermissionChanged } from '../utils/permissions';
 
 /**
  * 统计口径全局状态：阈值由系统设置页配置，持久化于 localStorage。
@@ -39,6 +40,10 @@ export function CriteriaProvider({ children }: { children: ReactNode }) {
       const applied = applyCloudSettings(cloud);
       if (applied.criteria && cloud.criteria) {
         setThresholds(cloud.criteria);
+      }
+      // 云端管理员列表（如有）已写入本地，通知全站刷新权限判断
+      if (applied.roles) {
+        notifyPermissionChanged();
       }
     })();
     return () => {

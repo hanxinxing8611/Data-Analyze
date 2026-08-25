@@ -11,7 +11,11 @@ import {
 } from '../database/db';
 import { fetchCloudSchedule, pushCloudSchedule } from '../utils/cloudSchedule';
 import { computeTaskStats, pushCloudTaskStats } from '../utils/cloudTaskStats';
-import { usePermission } from '../utils/permissions';
+import {
+  loadEngineerList,
+  usePermission,
+  type EngineerEntry,
+} from '../utils/permissions';
 import { Button, Card, EmptyState, Loading, PageHeader, Badge } from '../components/ui';
 import GanttChart from '../components/charts/GanttChart';
 import type { ScheduleItem } from '../types';
@@ -30,29 +34,9 @@ const PRODUCT_OPTIONS = [
   'C60',
 ];
 
-/* ---- 工程师列表（本地自动保存） ---- */
+/* ---- 工程师列表（本地自动保存，读取逻辑统一在 permissions.ts） ---- */
 
 const ENGINEERS_KEY = 'dv-engineers';
-
-interface EngineerEntry {
-  name: string;
-  email: string;
-}
-
-function loadEngineers(): EngineerEntry[] {
-  try {
-    const raw = localStorage.getItem(ENGINEERS_KEY);
-    if (!raw) return [];
-    const arr = JSON.parse(raw) as unknown;
-    if (!Array.isArray(arr)) return [];
-    return arr.filter(
-      (e): e is EngineerEntry =>
-        !!e && typeof (e as EngineerEntry).name === 'string',
-    );
-  } catch {
-    return [];
-  }
-}
 
 function saveEngineers(list: EngineerEntry[]): void {
   try {
@@ -62,21 +46,25 @@ function saveEngineers(list: EngineerEntry[]): void {
   }
 }
 
-/* ---- 当前工程师（本地存储） ---- */
+/* ---- 查看筛选（仅影响本页显示范围，与登录身份解耦） ---- */
 
-const CURRENT_ENGINEER_KEY = 'dv-current-engineer';
+const SCHEDULE_FILTER_KEY = 'dv-schedule-filter';
+/** 旧版筛选值（曾与登录身份共用），首次访问时迁移 */
+const LEGACY_FILTER_KEY = 'dv-current-engineer';
 
-function loadCurrentEngineer(): string {
+function loadScheduleFilter(): string {
   try {
-    return localStorage.getItem(CURRENT_ENGINEER_KEY) || '';
+    const v = localStorage.getItem(SCHEDULE_FILTER_KEY);
+    if (v !== null) return v;
+    return localStorage.getItem(LEGACY_FILTER_KEY) || '';
   } catch {
     return '';
   }
 }
 
-function saveCurrentEngineer(name: string): void {
+function saveScheduleFilter(name: string): void {
   try {
-    localStorage.setItem(CURRENT_ENGINEER_KEY, name);
+    localStorage.setItem(SCHEDULE_FILTER_KEY, name);
   } catch {
     /* 忽略 */
   }
@@ -237,8 +225,8 @@ export default function Schedule() {
   }, [dbReady, version]);
 
   useEffect(() => {
-    setEngineers(loadEngineers());
-    setCurrentEngineer(loadCurrentEngineer());
+    setEngineers(loadEngineerList());
+    setCurrentEngineer(loadScheduleFilter());
   }, []);
 
   /* 逾期/到期提醒列表 */
@@ -322,10 +310,10 @@ export default function Schedule() {
       saveEngineers(next);
       return next;
     });
-    // 如果删除的是当前选择的工程师，同时清除选择
+    // 如果删除的是当前筛选的工程师，同时清除筛选
     if (currentEngineer === name) {
       setCurrentEngineer('');
-      saveCurrentEngineer('');
+      saveScheduleFilter('');
     }
   };
 
@@ -466,16 +454,16 @@ export default function Schedule() {
         }
       />
 
-      {/* 当前工程师选择器 */}
+      {/* 工程师筛选（仅影响查看范围，登录身份请在左侧边栏切换） */}
       {engineers.length > 0 && (
         <div className="mb-4 flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2.5">
-          <span className="text-xs font-medium text-slate-500">当前工程师：</span>
+          <span className="text-xs font-medium text-slate-500">筛选工程师：</span>
           <select
             value={currentEngineer}
             onChange={(e) => {
               const v = e.target.value;
               setCurrentEngineer(v);
-              saveCurrentEngineer(v);
+              saveScheduleFilter(v);
             }}
             className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-700"
           >

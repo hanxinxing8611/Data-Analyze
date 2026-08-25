@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useCriteria } from '../store/CriteriaContext';
 import { Button, Card, PageHeader } from '../components/ui';
 import Icon from '../components/layout/Icon';
-import { usePermission } from '../utils/permissions';
+import { usePermission, loadEngineerList, notifyPermissionChanged } from '../utils/permissions';
 import {
   isValidEmail,
   loadMailRecipients,
@@ -475,18 +475,24 @@ function RoleManagerCard() {
   const [newName, setNewName] = useState('');
   const [msg, setMsg] = useState<{ tone: 'success' | 'error' | 'info'; text: string } | null>(null);
 
-  const addName = () => {
-    const n = newName.trim();
-    if (!n) return;
-    if (names.includes(n)) {
-      setMsg({ tone: 'error', text: `"${n}" 已在管理员列表中` });
+  /** 可快速添加的工程师（已录入但还不是管理员） */
+  const candidates = loadEngineerList()
+    .map((e) => e.name.trim())
+    .filter((n) => n && !names.includes(n));
+
+  const addName = (n: string) => {
+    const name = n.trim();
+    if (!name) return;
+    if (names.includes(name)) {
+      setMsg({ tone: 'error', text: `"${name}" 已在管理员列表中` });
       return;
     }
-    const next = [...names, n];
+    const next = [...names, name];
     setNames(next);
     saveAdminNames(next);
+    notifyPermissionChanged();
     setNewName('');
-    setMsg({ tone: 'success', text: `已添加管理员 "${n}"` });
+    setMsg({ tone: 'success', text: `已添加管理员 "${name}"` });
     setTimeout(() => setMsg(null), 2000);
   };
 
@@ -494,6 +500,7 @@ function RoleManagerCard() {
     const next = names.filter((x) => x !== n);
     setNames(next);
     saveAdminNames(next);
+    notifyPermissionChanged();
     setMsg({ tone: 'info', text: `已移除管理员 "${n}"` });
     setTimeout(() => setMsg(null), 2000);
   };
@@ -534,22 +541,45 @@ function RoleManagerCard() {
           )}
         </div>
 
-        {/* 添加管理员 */}
+        {/* 从已录入工程师中快速添加（避免姓名不一致） */}
+        {candidates.length > 0 && (
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-slate-500">
+              快速添加（点击已录入的工程师）
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {candidates.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => addName(n)}
+                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+                  title="添加为管理员"
+                >
+                  ＋ {n}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 手动添加管理员 */}
         <div className="flex gap-2">
           <input
             type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addName()}
+            onKeyDown={(e) => e.key === 'Enter' && addName(newName)}
             placeholder="输入工程师姓名"
             className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition-colors focus:border-blue-500"
           />
-          <Button variant="secondary" onClick={addName}>
+          <Button variant="secondary" onClick={() => addName(newName)}>
             添加
           </Button>
         </div>
         <p className="text-xs text-slate-400">
-          管理员姓名需与验证计划中录入的工程师姓名完全一致，才能正确识别身份
+          管理员姓名需与验证计划中录入的工程师姓名完全一致；
+          添加/移除后，请在左侧边栏「身份选择」中确认当前身份已匹配。
         </p>
 
         {msg && (
@@ -574,7 +604,7 @@ function RoleManagerCard() {
 
 export default function Settings() {
   const [unlocked, setUnlocked] = useState(false);
-  const { canWrite } = usePermission();
+  const { canWrite, engineerName } = usePermission();
 
   useEffect(() => {
     try {
@@ -584,26 +614,7 @@ export default function Settings() {
     }
   }, []);
 
-  /* 工程师无权限访问系统设置 */
-  if (!canWrite) {
-    return (
-      <div>
-        <PageHeader
-          title="系统设置"
-          description="默认收件人与云端共享配置（需管理员权限）"
-        />
-        <Card>
-          <div className="flex items-center gap-3 rounded-lg border border-amber-100 bg-amber-50/50 px-4 py-3 text-sm text-amber-700">
-            <span className="text-base">🔒</span>
-            <span>
-              当前为<b>工程师</b>身份，无权限访问系统设置。如需修改配置，请联系管理员。
-            </span>
-          </div>
-        </Card>
-      </div>
-    );
-  }
-
+  /* 密码门在前：000000 即系统管理员凭证（防止身份识别异常时管理员被锁死） */
   if (!unlocked) {
     return (
       <div>
@@ -624,6 +635,17 @@ export default function Settings() {
       />
 
       <div className="space-y-6">
+        {/* 非管理员身份软提示（密码已验证，但当前身份不在管理员列表中） */}
+        {!canWrite && (
+          <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-800">
+            <span className="mt-0.5 text-base">⚠️</span>
+            <span>
+              当前身份「{engineerName || '未选择'}」<b>不在管理员列表</b>中，验证计划仅可查看。
+              若您是管理员，请在下方「权限管理」中添加该姓名，并在左侧边栏选择对应身份。
+            </span>
+          </div>
+        )}
+
         <MailRecipientsCard />
 
         <CloudSyncCard />
