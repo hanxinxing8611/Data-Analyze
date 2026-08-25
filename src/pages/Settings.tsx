@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useCriteria } from '../store/CriteriaContext';
 import { Button, Card, PageHeader } from '../components/ui';
 import Icon from '../components/layout/Icon';
-import { usePermission, loadEngineerList, notifyPermissionChanged } from '../utils/permissions';
+import { usePermission, notifyPermissionChanged } from '../utils/permissions';
 import {
   isValidEmail,
   loadMailRecipients,
@@ -17,8 +17,11 @@ import {
   saveAdminNames,
   saveCloudConfig,
   syncSettingsToCloud,
+  loadEngineersConfig,
+  saveEngineersConfig,
   type CloudConfig,
   type CloudSyncInfo,
+  type EngineerEntry,
 } from '../utils/cloudSettings';
 
 /** 系统管理员密码（防误改，非安全加密） */
@@ -287,6 +290,7 @@ function CloudSyncCard() {
       if (applied.criteria) parts.push('统计口径');
       if (applied.recipients) parts.push('默认收件人');
       if (applied.roles) parts.push('权限管理');
+      if (applied.engineers) parts.push('工程师名录');
       setMsg({
         tone: 'success',
         text: `已应用云端设置（${parts.join('、') || '无共享项'}），页面即将刷新…`,
@@ -418,6 +422,15 @@ function CloudSyncCard() {
             />
             权限管理
           </label>
+          <label className="flex items-center gap-1.5 text-[13px]">
+            <input
+              type="checkbox"
+              checked={cfg.shareEngineers}
+              onChange={(e) => saveCfg({ shareEngineers: e.target.checked })}
+              className="rounded text-blue-600"
+            />
+            工程师名录
+          </label>
         </div>
 
         {/* 同步状态与操作 */}
@@ -476,6 +489,192 @@ function CloudSyncCard() {
   );
 }
 
+/* ================= 工程师名录管理 ================= */
+
+function EngineerManagerCard() {
+  const [list, setList] = useState<EngineerEntry[]>(() => loadEngineersConfig());
+  const [newName, setNewName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [error, setError] = useState('');
+  const [msg, setMsg] = useState<{ tone: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [editIdx, setEditIdx] = useState<number | null>(null);
+
+  const persist = (next: EngineerEntry[]) => {
+    setList(next);
+    saveEngineersConfig(next);
+    notifyPermissionChanged(); // 通知侧边栏刷新身份选择器
+    const cfg = loadCloudConfig();
+    if (cfg.token && cfg.shareEngineers) {
+      setMsg({ tone: 'info', text: '正在同步云端…' });
+      void syncSettingsToCloud().then((r) => {
+        setMsg(
+          r.ok
+            ? { tone: 'success', text: '已同步云端，其他工程师下次打开页面即生效' }
+            : r.message === 'nothing'
+              ? { tone: 'info', text: '已保存（本机）——云端共享未勾选工程师名录' }
+              : { tone: 'error', text: `已保存（本机），云端同步失败：${r.message}` },
+        );
+        setTimeout(() => setMsg(null), 6000);
+      });
+    } else {
+      setMsg({ tone: 'success', text: '已保存（本机）' });
+      setTimeout(() => setMsg(null), 2000);
+    }
+  };
+
+  const addOrUpdate = (e: FormEvent) => {
+    e.preventDefault();
+    const name = newName.trim();
+    const email = newEmail.trim();
+    if (!name) { setError('请输入工程师姓名'); return; }
+    if (email && !isValidEmail(email)) { setError('邮箱格式不正确'); return; }
+    const dup = list.find((en) => en.name === name);
+    if (editIdx !== null) {
+      // 编辑模式
+      const next = [...list];
+      next[editIdx] = { name, email };
+      persist(next);
+      setEditIdx(null);
+    } else if (dup) {
+      setError(`"${name}" 已在名录中`);
+      return;
+    } else {
+      persist([...list, { name, email }]);
+    }
+    setNewName('');
+    setNewEmail('');
+    setError('');
+  };
+
+  const startEdit = (idx: number) => {
+    setEditIdx(idx);
+    setNewName(list[idx].name);
+    setNewEmail(list[idx].email);
+    setError('');
+  };
+
+  const cancelEdit = () => {
+    setEditIdx(null);
+    setNewName('');
+    setNewEmail('');
+    setError('');
+  };
+
+  const remove = (idx: number) => {
+    const name = list[idx].name;
+    const next = list.filter((_, i) => i !== idx);
+    persist(next);
+    setMsg({ tone: 'info', text: `已移除 "${name}"` });
+    setTimeout(() => setMsg(null), 2000);
+  };
+
+  return (
+    <Card title="工程师名录">
+      <div className="space-y-4 text-sm text-slate-600">
+        <p>
+          在此配置所有工程师的<b className="text-slate-800">姓名和邮箱</b>。
+          配置后，侧边栏「身份选择器」将自动显示所有工程师，选择身份后邮箱自动带入验证计划、报告生成等页面。
+        </p>
+
+        {/* 工程师列表 */}
+        {list.length > 0 ? (
+          <div className="max-h-[260px] overflow-auto rounded-lg border border-slate-200">
+            <table className="w-full">
+              <thead className="sticky top-0 bg-slate-50 text-xs text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">姓名</th>
+                  <th className="px-3 py-2 text-left font-medium">邮箱</th>
+                  <th className="px-3 py-2 text-center font-medium w-24">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {list.map((en, i) => (
+                  <tr key={en.name} className="hover:bg-slate-50/50">
+                    <td className="px-3 py-2 text-[13px] font-medium text-slate-800">{en.name}</td>
+                    <td className="px-3 py-2">
+                      <span className={`text-[13px] ${en.email ? 'font-mono text-slate-600' : 'text-slate-400'}`}>
+                        {en.email || '（未填写）'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => startEdit(i)}
+                          className="text-xs text-blue-600 hover:underline"
+                        >
+                          编辑
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => remove(i)}
+                          className="text-xs text-red-500 hover:underline"
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="rounded-lg border border-dashed border-slate-300 px-3 py-3 text-center text-[13px] text-slate-400">
+            暂无工程师名录，请添加工程师姓名和邮箱
+          </p>
+        )}
+
+        {/* 添加/编辑表单 */}
+        <form onSubmit={addOrUpdate} className="space-y-2">
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <label className="mb-1 block text-xs font-medium text-slate-500">姓名</label>
+              <input
+                type="text"
+                value={newName}
+                onChange={(e) => { setNewName(e.target.value); setError(''); }}
+                placeholder="工程师姓名"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition-colors focus:border-blue-500"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="mb-1 block text-xs font-medium text-slate-500">邮箱</label>
+              <input
+                type="text"
+                value={newEmail}
+                onChange={(e) => { setNewEmail(e.target.value); setError(''); }}
+                placeholder="name@example.com"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm outline-none transition-colors focus:border-blue-500"
+              />
+            </div>
+            <Button type="submit" variant="secondary">
+              {editIdx !== null ? '更新' : '添加'}
+            </Button>
+            {editIdx !== null && (
+              <Button variant="secondary" onClick={cancelEdit}>
+                取消
+              </Button>
+            )}
+          </div>
+          {error && <p className="text-xs text-red-500">{error}</p>}
+        </form>
+
+        {msg && (
+          <p className={`text-xs ${msg.tone === 'error' ? 'text-red-500' : msg.tone === 'success' ? 'text-emerald-600' : 'text-blue-600'}`}>
+            {msg.text}
+          </p>
+        )}
+
+        <p className="text-xs text-slate-400">
+          工程师名录在「系统设置」中管理，配置后自动同步到云端供全团队使用。
+          管理员可在下方「权限管理」中将名录中的工程师设为管理员。
+        </p>
+      </div>
+    </Card>
+  );
+}
+
 /* ================= 权限管理 ================= */
 
 function RoleManagerCard() {
@@ -484,7 +683,7 @@ function RoleManagerCard() {
   const [msg, setMsg] = useState<{ tone: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   /** 可快速添加的工程师（已录入但还不是管理员） */
-  const candidates = loadEngineerList()
+  const candidates = loadEngineersConfig()
     .map((e) => e.name.trim())
     .filter((n) => n && !names.includes(n));
 
@@ -657,6 +856,8 @@ export default function Settings() {
         <MailRecipientsCard />
 
         <CloudSyncCard />
+
+        <EngineerManagerCard />
 
         <RoleManagerCard />
 

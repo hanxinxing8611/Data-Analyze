@@ -12,6 +12,15 @@ import {
 /** 管理员列表本地存储 key */
 export const ADMIN_NAMES_STORAGE_KEY = 'dv-admin-names';
 
+/** 工程师名录本地存储 key */
+export const ENGINEERS_CONFIG_KEY = 'dv-engineers';
+
+/** 工程师条目 */
+export interface EngineerEntry {
+  name: string;
+  email: string;
+}
+
 /** 读取本地管理员列表 */
 export function loadAdminNames(): string[] {
   try {
@@ -29,6 +38,40 @@ export function loadAdminNames(): string[] {
 export function saveAdminNames(names: string[]): void {
   try {
     localStorage.setItem(ADMIN_NAMES_STORAGE_KEY, JSON.stringify(names));
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/** 读取本地工程师名录 */
+export function loadEngineersConfig(): EngineerEntry[] {
+  try {
+    const raw = localStorage.getItem(ENGINEERS_CONFIG_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return [];
+    return arr.filter(
+      (e): e is EngineerEntry =>
+        !!e && typeof (e as EngineerEntry).name === 'string' && (e as EngineerEntry).name.trim().length > 0,
+    ).map((e) => ({ name: e.name.trim(), email: typeof e.email === 'string' ? e.email.trim() : '' }));
+  } catch {
+    return [];
+  }
+}
+
+/** 保存本地工程师名录（自动去重按姓名） */
+export function saveEngineersConfig(list: EngineerEntry[]): void {
+  try {
+    const seen = new Set<string>();
+    const deduped: EngineerEntry[] = [];
+    for (const e of list) {
+      const n = e.name.trim();
+      if (n && !seen.has(n)) {
+        seen.add(n);
+        deduped.push({ name: n, email: e.email.trim() });
+      }
+    }
+    localStorage.setItem(ENGINEERS_CONFIG_KEY, JSON.stringify(deduped));
   } catch {
     /* 忽略 */
   }
@@ -54,6 +97,8 @@ export interface CloudSettings {
   mailRecipients?: string[];
   /** 管理员工程师姓名列表（缺失表示不共享；[]=全员管理员，即无权限限制） */
   adminNames?: string[];
+  /** 工程师名录（缺失表示不共享） */
+  engineers?: EngineerEntry[];
   /** 云端最后更新时间（ISO 字符串） */
   updatedAt?: string;
 }
@@ -69,6 +114,8 @@ export interface CloudConfig {
   shareRecipients: boolean;
   /** 保存时是否共享权限管理（管理员列表） */
   shareRoles: boolean;
+  /** 保存时是否共享工程师名录 */
+  shareEngineers: boolean;
 }
 
 export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
@@ -78,6 +125,7 @@ export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
   shareCriteria: true,
   shareRecipients: true,
   shareRoles: true,
+  shareEngineers: true,
 };
 
 /** 仓库中共享文件的路径（public/ 下随 Vite 部署，API 与静态回退两通道均可读） */
@@ -110,6 +158,7 @@ export function loadCloudConfig(): CloudConfig {
       shareCriteria: p.shareCriteria !== false,
       shareRecipients: p.shareRecipients !== false,
       shareRoles: p.shareRoles !== false,
+      shareEngineers: p.shareEngineers !== false,
     };
   } catch {
     return { ...DEFAULT_CLOUD_CONFIG };
@@ -175,6 +224,17 @@ export function parseCloudSettings(raw: string): CloudSettings | null {
             .filter((v) => v.length > 0)
         : [];
     }
+    if (p.engineers !== undefined) {
+      out.engineers = Array.isArray(p.engineers)
+        ? (p.engineers as unknown[])
+            .filter((e): e is Record<string, unknown> => !!e && typeof e === 'object')
+            .map((e) => ({
+              name: typeof (e as Record<string, unknown>).name === 'string' ? String((e as Record<string, unknown>).name).trim() : '',
+              email: typeof (e as Record<string, unknown>).email === 'string' ? String((e as Record<string, unknown>).email).trim() : '',
+            }))
+            .filter((e) => e.name.length > 0)
+        : [];
+    }
     if (typeof p.updatedAt === 'string') out.updatedAt = p.updatedAt;
     return out;
   } catch {
@@ -197,6 +257,9 @@ export function collectCloudPayload(cfg: CloudConfig): CloudSettings {
   }
   if (cfg.shareRoles) {
     payload.adminNames = loadAdminNames();
+  }
+  if (cfg.shareEngineers) {
+    payload.engineers = loadEngineersConfig();
   }
   return payload;
 }
@@ -266,10 +329,11 @@ export async function fetchCloudSettings(): Promise<CloudSettings | null> {
 }
 
 /** 将云端设置写入本地（缺失字段跳过，保留本地值）；返回应用情况 */
-export function applyCloudSettings(cloud: CloudSettings): { criteria: boolean; recipients: boolean; roles: boolean } {
+export function applyCloudSettings(cloud: CloudSettings): { criteria: boolean; recipients: boolean; roles: boolean; engineers: boolean } {
   let criteriaApplied = false;
   let recipientsApplied = false;
   let rolesApplied = false;
+  let engineersApplied = false;
   if (cloud.criteria) {
     try {
       localStorage.setItem(CRITERIA_STORAGE_KEY, JSON.stringify(cloud.criteria));
@@ -286,7 +350,11 @@ export function applyCloudSettings(cloud: CloudSettings): { criteria: boolean; r
     saveAdminNames(cloud.adminNames);
     rolesApplied = true;
   }
-  return { criteria: criteriaApplied, recipients: recipientsApplied, roles: rolesApplied };
+  if (cloud.engineers) {
+    saveEngineersConfig(cloud.engineers);
+    engineersApplied = true;
+  }
+  return { criteria: criteriaApplied, recipients: recipientsApplied, roles: rolesApplied, engineers: engineersApplied };
 }
 
 /* ---------------- 推送 ---------------- */
@@ -349,7 +417,7 @@ export async function syncSettingsToCloud(): Promise<SyncResult> {
   const cfg = loadCloudConfig();
   if (!cfg.token) return { ok: false, message: 'not-configured' };
   const payload = collectCloudPayload(cfg);
-  if (!payload.criteria && !payload.mailRecipients && !payload.adminNames) {
+  if (!payload.criteria && !payload.mailRecipients && !payload.adminNames && (!payload.engineers || payload.engineers.length === 0)) {
     return { ok: false, message: 'nothing' };
   }
   try {

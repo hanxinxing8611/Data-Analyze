@@ -12,26 +12,17 @@ import {
 import { fetchCloudSchedule, pushCloudSchedule, type CloudScheduleItem } from '../utils/cloudSchedule';
 import { computeTaskStats, pushCloudTaskStats } from '../utils/cloudTaskStats';
 import {
-  loadEngineerList,
   usePermission,
-  type EngineerEntry,
 } from '../utils/permissions';
+import {
+  loadEngineersConfig,
+  saveEngineersConfig,
+  type EngineerEntry,
+} from '../utils/cloudSettings';
 import { Button, Card, EmptyState, Loading, PageHeader, Badge } from '../components/ui';
 import { useToast } from '../components/Toast';
 import GanttChart from '../components/charts/GanttChart';
 import type { ScheduleItem } from '../types';
-
-/* ---- 工程师列表（本地自动保存，读取逻辑统一在 permissions.ts） ---- */
-
-const ENGINEERS_KEY = 'dv-engineers';
-
-function saveEngineers(list: EngineerEntry[]): void {
-  try {
-    localStorage.setItem(ENGINEERS_KEY, JSON.stringify(list));
-  } catch {
-    /* 存储失败时忽略 */
-  }
-}
 
 /* ---- 查看筛选（仅影响本页显示范围，与登录身份解耦） ---- */
 
@@ -229,7 +220,7 @@ export default function Schedule() {
   }, [dbReady, version]);
 
   useEffect(() => {
-    setEngineers(loadEngineerList());
+    setEngineers(loadEngineersConfig());
     setCurrentEngineer(loadScheduleFilter());
   }, []);
 
@@ -331,7 +322,7 @@ export default function Schedule() {
   const handleRemoveEngineer = (name: string) => {
     setEngineers((prev) => {
       const next = prev.filter((e) => e.name !== name);
-      saveEngineers(next);
+      saveEngineersConfig(next);
       return next;
     });
     // 如果删除的是当前筛选的工程师，同时清除筛选
@@ -352,7 +343,7 @@ export default function Schedule() {
       } else {
         next = [...prev, { name, email }];
       }
-      saveEngineers(next);
+      saveEngineersConfig(next);
       return next;
     });
   };

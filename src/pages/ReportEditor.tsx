@@ -20,6 +20,7 @@ import {
 import { fmt } from '../utils/statistics';
 import { loadMailRecipients } from '../utils/mailRecipients';
 import { loadCloudConfig, syncSettingsToCloud } from '../utils/cloudSettings';
+import { getCurrentEngineer, getCurrentEngineerEmail } from '../utils/permissions';
 import { exportReportExcel, exportReportExcelBlob, exportReportPdf, buildReportFileName, type ChartImage } from '../report/exporters';
 import type { BatchSummary, ReportMetaInput, ReportMetadata, SampleRecord } from '../types';
 
@@ -93,13 +94,14 @@ function loadDefaultMeta(): ReportMetaInput {
   try {
     const raw = localStorage.getItem(DEFAULT_META_KEY);
     if (!raw) {
-      init.reporter = localStorage.getItem('lastReporter') || '';
+      // 优先使用侧边栏选择的当前身份，其次使用上次保存的报告人（兼容旧数据）
+      init.reporter = getCurrentEngineer() || localStorage.getItem('lastReporter') || '';
       return init;
     }
     const t = JSON.parse(raw) as Partial<ReportMetaInput>;
     return {
       ...init,
-      reporter: typeof t.reporter === 'string' ? t.reporter : '',
+      reporter: typeof t.reporter === 'string' ? t.reporter : (getCurrentEngineer() || localStorage.getItem('lastReporter') || ''),
       research_purpose: typeof t.research_purpose === 'string' ? t.research_purpose : '',
       process_method: typeof t.process_method === 'string' ? t.process_method : '',
       key_parameters: typeof t.key_parameters === 'string' ? t.key_parameters : '',

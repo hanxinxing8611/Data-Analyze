@@ -9,27 +9,26 @@
  * 管理员列表来源：云端 settings.json（adminNames 字段），
  * 页面打开时自动拉取并写入本地 localStorage。
  *
+ * 工程师名录来源：云端 settings.json（engineers 字段），
+ * 页面打开时自动拉取并写入本地 localStorage（dv-engineers key）。
+ * 身份选择器候选列表 = 工程师名录 ∪ 管理员列表（去重）。
+ *
  * 身份切换入口在左侧边栏（身份下拉选择器）；
  * 身份或管理员列表变化时通过 window 事件通知所有 usePermission 实例实时刷新。
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { loadAdminNames } from './cloudSettings';
+import {
+  loadAdminNames,
+  loadEngineersConfig,
+  type EngineerEntry,
+} from './cloudSettings';
 
 /** 当前工程师（登录身份）本地存储 key */
 const CURRENT_ENGINEER_KEY = 'dv-current-engineer';
 
-/** 工程师列表本地存储 key（验证计划页写入） */
-const ENGINEERS_KEY = 'dv-engineers';
-
 /** 身份/管理员列表变化事件（跨组件实时刷新权限） */
 const PERMISSION_CHANGE_EVENT = 'dv-permission-change';
-
-/** 已保存的工程师条目（验证计划页自动保存） */
-export interface EngineerEntry {
-  name: string;
-  email: string;
-}
 
 /** 获取当前登录的工程师姓名 */
 export function getCurrentEngineer(): string {
@@ -38,6 +37,14 @@ export function getCurrentEngineer(): string {
   } catch {
     return '';
   }
+}
+
+/** 获取当前工程师的邮箱（从工程师名录中查找） */
+export function getCurrentEngineerEmail(): string {
+  const name = getCurrentEngineer().trim();
+  if (!name) return '';
+  const eng = loadEngineersConfig().find((e) => e.name === name);
+  return eng?.email ?? '';
 }
 
 /** 设置当前登录的工程师姓名（并通知全站刷新权限） */
@@ -50,32 +57,28 @@ export function setCurrentEngineer(name: string): void {
   notifyPermissionChanged();
 }
 
-/** 读取已保存的工程师列表 */
-export function loadEngineerList(): EngineerEntry[] {
-  try {
-    const raw = localStorage.getItem(ENGINEERS_KEY);
-    if (!raw) return [];
-    const arr = JSON.parse(raw) as unknown;
-    if (!Array.isArray(arr)) return [];
-    return arr.filter(
-      (e): e is EngineerEntry =>
-        !!e && typeof (e as EngineerEntry).name === 'string',
-    );
-  } catch {
-    return [];
-  }
-}
-
-/** 身份下拉候选：工程师列表 ∪ 管理员列表（去重，保证管理员姓名始终可选） */
+/**
+ * 身份下拉候选：工程师名录 ∪ 管理员列表（去重，保证管理员姓名始终可选）
+ * 优先从云端同步的工程师名录读取，向后兼容旧 dv-engineers 数据
+ */
 export function loadIdentityOptions(): string[] {
   const out: string[] = [];
   const push = (n: string) => {
     const t = n.trim();
     if (t && !out.includes(t)) out.push(t);
   };
-  loadEngineerList().forEach((e) => push(e.name));
+  // 来源1：云端工程师名录（主要来源）
+  loadEngineersConfig().forEach((e) => push(e.name));
+  // 来源2：管理员列表（兜底，即使不在名录中也能选）
   loadAdminNames().forEach(push);
   return out;
+}
+
+/** 从工程师名录中查找工程师邮箱 */
+export function findEngineerEmail(name: string): string {
+  const n = name.trim();
+  if (!n) return '';
+  return loadEngineersConfig().find((e) => e.name === n)?.email ?? '';
 }
 
 /** 通知所有 usePermission 实例重新读取身份与管理员列表 */
@@ -106,6 +109,7 @@ export function usePermission(): {
   isAdmin: boolean;
   canWrite: boolean;
   engineerName: string;
+  engineerEmail: string;
 } {
   const [version, setVersion] = useState(0);
 
@@ -116,6 +120,7 @@ export function usePermission(): {
   }, []);
 
   const engineerName = useMemo(() => getCurrentEngineer(), [version]);
+  const engineerEmail = useMemo(() => getCurrentEngineerEmail(), [version]);
   const admin = useMemo(() => isAdmin(engineerName), [engineerName, version]);
-  return { isAdmin: admin, canWrite: admin, engineerName };
+  return { isAdmin: admin, canWrite: admin, engineerName, engineerEmail };
 }

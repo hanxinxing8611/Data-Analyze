@@ -6,6 +6,7 @@ import {
   loadIdentityOptions,
   setCurrentEngineer,
   usePermission,
+  findEngineerEmail,
 } from '../../utils/permissions';
 
 const NAV_ITEMS = [
@@ -20,7 +21,7 @@ const NAV_ITEMS = [
 
 export default function Sidebar() {
   const { dbReady } = useData();
-  const { canWrite, engineerName } = usePermission();
+  const { canWrite, engineerName, engineerEmail } = usePermission();
   const [identityOptions, setIdentityOptions] = useState<string[]>(() =>
     loadIdentityOptions(),
   );
@@ -122,12 +123,20 @@ export default function Sidebar() {
               className="w-full cursor-pointer appearance-none truncate rounded-md border border-white/10 bg-white/[0.05] px-2 py-1 text-xs font-medium text-slate-200 outline-none transition-colors hover:border-white/20 focus:border-blue-500/60"
             >
               <option value="">选择身份…</option>
-              {identityOptions.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
+              {identityOptions.map((n) => {
+                const email = findEngineerEmail(n);
+                return (
+                  <option key={n} value={n}>
+                    {n}{email ? ` (${email})` : ''}
+                  </option>
+                );
+              })}
             </select>
+            {engineerEmail && (
+              <div className="mt-0.5 truncate text-[10px] text-slate-500" title={engineerEmail}>
+                {engineerEmail}
+              </div>
+            )}
             <div
               className={`mt-1 text-[10px] font-medium ${
                 canWrite ? 'text-blue-400' : 'text-slate-500'
