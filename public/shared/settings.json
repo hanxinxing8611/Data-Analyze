@@ -1,0 +1,28 @@
+{
+  "updatedAt": "2026-08-25T06:29:05.803Z",
+  "criteria": {
+    "championRule": {
+      "enabled": true,
+      "threshold": 0
+    },
+    "medianRule": {
+      "enabled": true,
+      "threshold": 0
+    },
+    "vocffRule": {
+      "enabled": false,
+      "threshold": 0
+    },
+    "pceMin": 18,
+    "ffMin": 0.5,
+    "resistanceMin": 0
+  },
+  "mailRecipients": [
+    "xinxing.han@jingling-tech.com",
+    "jason@jingling-tech.com"
+  ],
+  "adminNames": [
+    "xinxing.han@jingling-tech.com",
+    "jason@jingling-tech.com"
+  ]
+}
