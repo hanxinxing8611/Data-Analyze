@@ -45,7 +45,7 @@ export default function Dashboard() {
     return m;
   }, [batches, records, thresholds]);
 
-  /* 排产到期/逾期提醒 */
+  /* 验证计划到期/逾期提醒 */
   const dueSchedules = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
     return schedules.filter((s) => s.status !== 'completed' && s.report_deadline <= today);
@@ -72,7 +72,7 @@ export default function Dashboard() {
         }
       />
 
-      {/* 排产到期提醒横幅 */}
+      {/* 验证计划到期提醒横幅 */}
       {dueSchedules.length > 0 && (
         <div className="mb-4 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
           <div className="flex items-center gap-2">
@@ -85,7 +85,7 @@ export default function Dashboard() {
             </span>
           </div>
           <Link to="/schedule">
-            <Button variant="secondary">查看排产</Button>
+            <Button variant="secondary">查看验证计划</Button>
           </Link>
         </div>
       )}

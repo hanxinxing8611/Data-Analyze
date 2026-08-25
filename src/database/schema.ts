@@ -5,7 +5,7 @@
  * sample_record       样品测试记录（每条对应 TXT 中一个样本块的关键参数）
  * iv_curve_data        IV 曲线数据点（每条测试记录约 40 个电压/电流/功率点）
  *  report_metadata     报告元数据（研究目的、过程方法、结论等手工录入内容）
- *  schedule            排产计划（工程师、批次、材料、验证与报告时间节点）
+ *  schedule            验证计划（工程师、批次、产品名称、验证与报告时间节点）
  */
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS material_batch (

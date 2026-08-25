@@ -388,9 +388,9 @@ export async function resetDB(): Promise<void> {
   await saveDB();
 }
 
-/* ---------------- 排产计划 ---------------- */
+/* ---------------- 验证计划 ---------------- */
 
-/** 查询全部排产条目（按开始日期倒序） */
+/** 查询全部验证计划条目（按开始日期倒序） */
 export function querySchedules(): ScheduleItem[] {
   if (!db) return [];
   const res = db.exec(
@@ -401,7 +401,7 @@ export function querySchedules(): ScheduleItem[] {
   return rowsToObjects<ScheduleItem>(res);
 }
 
-/** 新增排产条目 */
+/** 新增验证计划条目 */
 export async function insertSchedule(item: Omit<ScheduleItem, 'id' | 'created_at'>): Promise<void> {
   const database = await getDB();
   database.run(
@@ -412,7 +412,7 @@ export async function insertSchedule(item: Omit<ScheduleItem, 'id' | 'created_at
   await saveDB();
 }
 
-/** 更新排产条目 */
+/** 更新验证计划条目 */
 export async function updateSchedule(id: number, fields: Partial<Omit<ScheduleItem, 'id' | 'created_at'>>): Promise<void> {
   const database = await getDB();
   const sets: string[] = [];
@@ -427,7 +427,7 @@ export async function updateSchedule(id: number, fields: Partial<Omit<ScheduleIt
   await saveDB();
 }
 
-/** 删除排产条目 */
+/** 删除验证计划条目 */
 export async function deleteSchedule(id: number): Promise<void> {
   const database = await getDB();
   database.run('DELETE FROM schedule WHERE id = ?', [id]);

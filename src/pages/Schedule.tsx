@@ -5,12 +5,56 @@ import {
   insertSchedule,
   updateSchedule,
   deleteSchedule,
-  queryBatches,
 } from '../database/db';
-import { loadMailRecipients } from '../utils/mailRecipients';
 import { Button, Card, EmptyState, Loading, PageHeader, Badge } from '../components/ui';
 import GanttChart from '../components/charts/GanttChart';
 import type { ScheduleItem } from '../types';
+
+/* ---- 产品名称选项 ---- */
+
+const PRODUCT_OPTIONS = [
+  'α-FAPbI3',
+  'MAPbI3',
+  'CsPbI3',
+  'FAPbBr3',
+  'MAPbBr3',
+  'CsPbBr3',
+  'δ-FAPbI3',
+  'PbI2',
+  'C60',
+];
+
+/* ---- 工程师列表（本地自动保存） ---- */
+
+const ENGINEERS_KEY = 'dv-engineers';
+
+interface EngineerEntry {
+  name: string;
+  email: string;
+}
+
+function loadEngineers(): EngineerEntry[] {
+  try {
+    const raw = localStorage.getItem(ENGINEERS_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return [];
+    return arr.filter(
+      (e): e is EngineerEntry =>
+        !!e && typeof (e as EngineerEntry).name === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveEngineers(list: EngineerEntry[]): void {
+  try {
+    localStorage.setItem(ENGINEERS_KEY, JSON.stringify(list));
+  } catch {
+    /* 存储失败时忽略 */
+  }
+}
 
 /* ---- 工作日计算 ---- */
 
@@ -69,14 +113,14 @@ function buildReminderText(items: ScheduleItem[]): string {
   }
   lines.push('');
   lines.push('请登录器件验证系统 → 报告生成页提交报告。');
-  lines.push('本提醒由器件验证排产计划自动生成');
+  lines.push('本提醒由器件验证计划自动生成');
   return lines.join('\n');
 }
 
 export default function Schedule() {
   const { dbReady, version } = useData();
   const [items, setItems] = useState<ScheduleItem[]>([]);
-  const [batches, setBatches] = useState<{ batch_id: string; material_type: string }[]>([]);
+  const [engineers, setEngineers] = useState<EngineerEntry[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [editId, setEditId] = useState<number | null>(null);
   const [error, setError] = useState('');
@@ -85,8 +129,11 @@ export default function Schedule() {
   useEffect(() => {
     if (!dbReady) return;
     setItems(querySchedules());
-    setBatches(queryBatches().map((b) => ({ batch_id: b.batch_id, material_type: b.material_type })));
   }, [dbReady, version]);
+
+  useEffect(() => {
+    setEngineers(loadEngineers());
+  }, []);
 
   /* 逾期/到期提醒列表 */
   const dueItems = useMemo(() => {
@@ -96,11 +143,47 @@ export default function Schedule() {
     );
   }, [items]);
 
+  /* 工程师姓名输入：精确匹配已保存工程师时自动带出邮箱 */
+  const handleEngineerName = (name: string) => {
+    const found = engineers.find((e) => e.name === name);
+    setForm((prev) => ({
+      ...prev,
+      engineer_name: name,
+      engineer_email: found && found.email ? found.email : prev.engineer_email,
+    }));
+  };
+
+  /* 删除已保存工程师 */
+  const handleRemoveEngineer = (name: string) => {
+    setEngineers((prev) => {
+      const next = prev.filter((e) => e.name !== name);
+      saveEngineers(next);
+      return next;
+    });
+  };
+
+  /* 提交时自动保存/更新工程师信息 */
+  const persistEngineer = (name: string, email: string) => {
+    setEngineers((prev) => {
+      const idx = prev.findIndex((e) => e.name === name);
+      let next: EngineerEntry[];
+      if (idx >= 0) {
+        next = [...prev];
+        if (email) next[idx] = { ...next[idx], email };
+      } else {
+        next = [...prev, { name, email }];
+      }
+      saveEngineers(next);
+      return next;
+    });
+  };
+
   /* 表单提交 */
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
-    if (!form.batch_id.trim()) { setError('请选择批次'); return; }
+    if (!form.batch_id.trim()) { setError('请填写批次号'); return; }
+    if (!form.material_type) { setError('请选择产品名称'); return; }
     if (!form.engineer_name.trim()) { setError('请填写工程师姓名'); return; }
     if (!form.engineer_email.trim()) { setError('请填写工程师邮箱'); return; }
     if (!form.start_date) { setError('请选择开始日期'); return; }
@@ -110,29 +193,30 @@ export default function Schedule() {
     try {
       if (editId !== null) {
         await updateSchedule(editId, {
-          batch_id: form.batch_id,
+          batch_id: form.batch_id.trim(),
           material_type: form.material_type,
-          engineer_name: form.engineer_name,
-          engineer_email: form.engineer_email,
+          engineer_name: form.engineer_name.trim(),
+          engineer_email: form.engineer_email.trim(),
           start_date: form.start_date,
           report_deadline: deadline,
           status: form.status,
           notes: form.notes || null,
         });
-        setMsg('排产条目已更新');
+        setMsg('验证计划条目已更新');
       } else {
         await insertSchedule({
-          batch_id: form.batch_id,
+          batch_id: form.batch_id.trim(),
           material_type: form.material_type,
-          engineer_name: form.engineer_name,
-          engineer_email: form.engineer_email,
+          engineer_name: form.engineer_name.trim(),
+          engineer_email: form.engineer_email.trim(),
           start_date: form.start_date,
           report_deadline: deadline,
           status: form.status,
           notes: form.notes || null,
         });
-        setMsg('排产条目已添加');
+        setMsg('验证计划条目已添加');
       }
+      persistEngineer(form.engineer_name.trim(), form.engineer_email.trim());
       setForm(emptyForm());
       setEditId(null);
       setItems(querySchedules());
@@ -160,7 +244,7 @@ export default function Schedule() {
 
   /* 删除 */
   const handleDelete = async (id: number) => {
-    if (!window.confirm('确定删除该排产条目？')) return;
+    if (!window.confirm('确定删除该验证计划条目？')) return;
     await deleteSchedule(id);
     setItems(querySchedules());
     if (editId === id) {
@@ -193,11 +277,17 @@ export default function Schedule() {
 
   if (!dbReady) return <Loading text="数据库初始化中…" />;
 
+  /* 旧数据的产品名称可能不在固定选项中，编辑时动态补充显示 */
+  const extraProduct =
+    form.material_type && !PRODUCT_OPTIONS.includes(form.material_type)
+      ? form.material_type
+      : null;
+
   return (
     <div>
       <PageHeader
-        title="排产计划"
-        description="器件验证排产与报告提交时间管理"
+        title="验证计划"
+        description="器件验证任务安排与报告提交时间管理"
       />
 
       {/* 到期提醒 */}
@@ -225,17 +315,17 @@ export default function Schedule() {
         <GanttChart items={items} />
       </Card>
 
-      {/* 排产列表 */}
-      <Card title="排产明细" className="mt-4" bodyClassName="px-0 py-0">
+      {/* 验证计划列表 */}
+      <Card title="验证计划明细" className="mt-4" bodyClassName="px-0 py-0">
         {items.length === 0 ? (
-          <EmptyState icon="calendar" title="暂无排产计划" description="点击下方表单添加第一条排产" />
+          <EmptyState icon="calendar" title="暂无验证计划" description="点击下方表单添加第一条验证计划" />
         ) : (
           <div className="max-h-[400px] overflow-auto">
             <table className="data-table w-full">
               <thead className="sticky top-0 bg-slate-50">
                 <tr>
                   <th>批次</th>
-                  <th>材料</th>
+                  <th>产品名称</th>
                   <th>工程师</th>
                   <th>开始</th>
                   <th>截止</th>
@@ -318,51 +408,55 @@ export default function Schedule() {
       </Card>
 
       {/* 新增/编辑表单 */}
-      <Card title={editId !== null ? '编辑排产' : '新增排产'} className="mt-4">
+      <Card title={editId !== null ? '编辑验证计划' : '新增验证计划'} className="mt-4">
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            {/* 批次选择 */}
+            {/* 批次号（手工录入） */}
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">批次</label>
-              <select
+              <label className="mb-1 block text-xs font-medium text-slate-600">批次号</label>
+              <input
+                type="text"
                 value={form.batch_id}
-                onChange={(e) => {
-                  const b = batches.find((x) => x.batch_id === e.target.value);
-                  setForm({ ...form, batch_id: e.target.value, material_type: b?.material_type || '' });
-                }}
+                onChange={(e) => setForm({ ...form, batch_id: e.target.value })}
+                placeholder="手工录入，例如：CB615W1"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+
+            {/* 产品名称（下拉选择） */}
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600">产品名称</label>
+              <select
+                value={form.material_type}
+                onChange={(e) => setForm({ ...form, material_type: e.target.value })}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               >
-                <option value="">请选择批次</option>
-                {batches.map((b) => (
-                  <option key={b.batch_id} value={b.batch_id}>
-                    {b.batch_id}（{b.material_type}）
+                <option value="">请选择产品名称</option>
+                {extraProduct && <option value={extraProduct}>{extraProduct}</option>}
+                {PRODUCT_OPTIONS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
                   </option>
                 ))}
               </select>
             </div>
 
-            {/* 材料类型 */}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">材料类型</label>
-              <input
-                type="text"
-                value={form.material_type}
-                onChange={(e) => setForm({ ...form, material_type: e.target.value })}
-                placeholder="自动带出，可手动修改"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-            </div>
-
-            {/* 工程师 */}
+            {/* 工程师（可输入 + 已保存建议） */}
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-600">工程师姓名</label>
               <input
                 type="text"
+                list="engineer-name-list"
                 value={form.engineer_name}
-                onChange={(e) => setForm({ ...form, engineer_name: e.target.value })}
-                placeholder="例如：张三"
+                onChange={(e) => handleEngineerName(e.target.value)}
+                placeholder="输入姓名，可从已保存工程师中选择"
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               />
+              <datalist id="engineer-name-list">
+                {engineers.map((e) => (
+                  <option key={e.name} value={e.name} />
+                ))}
+              </datalist>
             </div>
 
             {/* 邮箱 */}
@@ -430,12 +524,40 @@ export default function Schedule() {
             </div>
           </div>
 
+          {/* 已保存工程师（自动记录，可删除） */}
+          {engineers.length > 0 && (
+            <div>
+              <div className="mb-1.5 text-xs font-medium text-slate-600">
+                已保存工程师（提交时自动记录，点击 × 删除）
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {engineers.map((e) => (
+                  <span
+                    key={e.name}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 py-1 pl-2.5 pr-1.5 text-xs text-slate-700"
+                  >
+                    <span className="font-medium">{e.name}</span>
+                    {e.email && <span className="text-slate-400">{e.email}</span>}
+                    <button
+                      type="button"
+                      title={`删除 ${e.name}`}
+                      className="flex h-4 w-4 items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600"
+                      onClick={() => handleRemoveEngineer(e.name)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {error && <p className="text-xs text-red-500">{error}</p>}
           {msg && <p className="text-xs text-emerald-600">{msg}</p>}
 
           <div className="flex items-center gap-3">
             <Button type="submit">
-              {editId !== null ? '更新排产' : '添加排产'}
+              {editId !== null ? '更新验证计划' : '添加验证计划'}
             </Button>
             {editId !== null && (
               <Button

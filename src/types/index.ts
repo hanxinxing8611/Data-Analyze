@@ -120,9 +120,9 @@ export interface SampleFilter {
   search?: string;
 }
 
-/* ================= 排产计划 ================= */
+/* ================= 验证计划 ================= */
 
-/** 排产计划条目 */
+/** 验证计划条目 */
 export interface ScheduleItem {
   id: number;
   batch_id: string;

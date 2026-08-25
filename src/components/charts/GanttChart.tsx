@@ -79,7 +79,7 @@ export default function GanttChart({ items, width = 720 }: Props) {
   if (items.length === 0) {
     return (
       <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-400">
-        暂无排产计划，请添加新条目
+        暂无验证计划，请添加新条目
       </div>
     );
   }
