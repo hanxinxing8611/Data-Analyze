@@ -2,6 +2,7 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { DataProvider } from './store/DataContext';
 import { CriteriaProvider } from './store/CriteriaContext';
 import { SelectionProvider } from './store/SelectionContext';
+import { ToastProvider } from './components/Toast';
 import AppLayout from './components/layout/AppLayout';
 import Dashboard from './pages/Dashboard';
 import DataManagement from './pages/DataManagement';
@@ -13,6 +14,7 @@ import Settings from './pages/Settings';
 
 export default function App() {
   return (
+    <ToastProvider>
     <DataProvider>
       <CriteriaProvider>
         <SelectionProvider>
@@ -36,5 +38,6 @@ export default function App() {
         </SelectionProvider>
       </CriteriaProvider>
     </DataProvider>
+    </ToastProvider>
   );
 }

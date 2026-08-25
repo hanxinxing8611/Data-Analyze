@@ -392,7 +392,7 @@ export default function TaskStats() {
               </button>
             </div>
 
-            <div className="overflow-auto">
+            <div className="overflow-auto scroll-shadow-x">
               <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} width={CHART_W} height={CHART_H} style={{ minWidth: '100%' }} fontFamily="Arial, 'Microsoft YaHei', sans-serif">
                 {/* Y-axis grid lines */}
                 {Array.from({ length: yTicks + 1 }, (_, i) => {

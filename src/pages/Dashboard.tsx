@@ -163,7 +163,7 @@ export default function Dashboard() {
 
       {/* 验证计划到期提醒横幅 */}
       {dueSchedules.length > 0 && (
-        <div className="mb-4 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+        <div className="mb-6 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
           <div className="flex items-center gap-2">
             <span className="flex h-2 w-2 rounded-full bg-amber-500" />
             <span className="text-sm font-medium text-amber-800">
@@ -188,12 +188,18 @@ export default function Dashboard() {
         <Card>
           <EmptyState
             icon="database"
-            title="暂无数据"
-            description="请先导入 IV 测试导出的 TXT 源文件，系统将自动解析样本参数、识别材料批次并入库"
+            title="欢迎使用器件验证平台"
+            description={
+              <span>
+                请先导入 IV 测试导出的 TXT 源文件，系统将自动解析样本参数、识别材料批次并入库。
+                <br />
+                导入后即可查看数据总览、对比分析、生成报告。
+              </span>
+            }
             action={
               <Link to="/data">
                 <Button>
-                  <span>前往导入</span>
+                  <span>开始导入</span>
                 </Button>
               </Link>
             }

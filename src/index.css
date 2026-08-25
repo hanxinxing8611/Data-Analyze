@@ -140,7 +140,8 @@
 /* 减少动态偏好：关闭装饰性动画 */
 @media (prefers-reduced-motion: reduce) {
   .animate-page-in,
-  .animate-nav-in {
+  .animate-nav-in,
+  .animate-toast-in {
     animation: none;
   }
   *,
@@ -148,6 +149,22 @@
   *::after {
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Toast 入场动画 */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-toast-in {
+  animation: toast-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 /* ================= 数据表格（全局统一规范） ================= */
@@ -175,8 +192,22 @@
   transition: background-color 0.12s ease;
 }
 
+.data-table tbody tr:nth-child(even) {
+  background-color: rgba(241, 245, 249, 0.5);
+}
+
 .data-table tbody tr:hover {
-  background-color: rgba(37, 99, 235, 0.045);
+  background-color: rgba(37, 99, 235, 0.055);
+}
+
+/* 滚动阴影指示器：横向滚动时右侧出现渐变阴影 */
+.scroll-shadow-x {
+  background:
+    linear-gradient(to right, white 30%, rgba(255,255,255,0)),
+    linear-gradient(to right, rgba(0,0,0,0.06), white 70%) 100% 0;
+  background-repeat: no-repeat;
+  background-size: 40px 100%, 40px 100%;
+  background-attachment: local, scroll;
 }
 
 /* ================= 表格内容统一微软雅黑 ================= */

@@ -1063,6 +1063,9 @@ export default function ReportEditor() {
               placeholder={f.placeholder}
               className="w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6 text-slate-700 focus:border-blue-500 focus:outline-none"
             />
+            <span className="text-[10px] text-slate-400">
+              {String(meta[f.key] || '').length} 字
+            </span>
           </label>
         ))}
       </Card>

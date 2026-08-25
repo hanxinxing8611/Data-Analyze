@@ -31,6 +31,7 @@ const UNLOCKED_KEY = 'dv-settings-unlocked';
 function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
   const [pwd, setPwd] = useState('');
   const [error, setError] = useState('');
+  const [showPwd, setShowPwd] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -83,7 +84,7 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
         </div>
         <input
           ref={inputRef}
-          type="password"
+          type={showPwd ? 'text' : 'password'}
           inputMode="numeric"
           autoComplete="off"
           value={pwd}
@@ -98,6 +99,13 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
               : 'border-slate-300 focus:border-blue-500'
           }`}
         />
+        <button
+          type="button"
+          onClick={() => setShowPwd(!showPwd)}
+          className="mx-auto mt-1.5 text-[11px] text-slate-400 hover:text-slate-600 transition-colors"
+        >
+          {showPwd ? '隐藏密码' : '显示密码'}
+        </button>
         {error && <p className="mt-2 text-center text-xs text-red-500">{error}</p>}
         <button
           type="submit"

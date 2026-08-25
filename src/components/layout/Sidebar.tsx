@@ -96,6 +96,11 @@ export default function Sidebar() {
                   }`}
                 />
                 <span>{item.label}</span>
+                {item.to === '/settings' && (
+                  <span className="ml-auto flex h-4 w-4 items-center justify-center rounded-full bg-amber-500/20 text-[10px] text-amber-400" title="系统设置已锁定，需管理员密码解锁">
+                    <Icon name="lock" className="h-2.5 w-2.5" />
+                  </span>
+                )}
               </>
             )}
           </NavLink>

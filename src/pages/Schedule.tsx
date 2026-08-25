@@ -17,6 +17,7 @@ import {
   type EngineerEntry,
 } from '../utils/permissions';
 import { Button, Card, EmptyState, Loading, PageHeader, Badge } from '../components/ui';
+import { useToast } from '../components/Toast';
 import GanttChart from '../components/charts/GanttChart';
 import type { ScheduleItem } from '../types';
 
@@ -214,8 +215,7 @@ export default function Schedule() {
   /** 截止日期是否被手动修改过（手动修改后不再随开始日期自动重算） */
   const [deadlineManual, setDeadlineManual] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
-  const [error, setError] = useState('');
-  const [msg, setMsg] = useState('');
+  const { showToast } = useToast();
   const [showReminder, setShowReminder] = useState(false);
   const { canWrite } = usePermission();
   /** 同步锁：防止并发推送（B3 防抖） */
@@ -296,14 +296,11 @@ export default function Schedule() {
       // B4: 先推 schedule，成功后才推 taskStats
       const result = await pushCloudSchedule(payload);
       if (result.ok) {
-        setMsg('已同步云端');
-        setTimeout(() => setMsg(''), 3000);
+        showToast('已同步云端');
       } else if (result.message === 'not-configured') {
-        // 未配置 Token，提示用户
-        setError('未配置 GitHub Token，数据仅保存在本地。请在「系统设置」→「云共享设置」中配置 Token 后同步。');
-        return;
+        showToast('未配置 GitHub Token，数据仅保存在本地。请在「系统设置」→「云共享设置」中配置 Token 后同步。', 'warning');
       } else {
-        setError(`云端同步失败：${result.message}`);
+        showToast(`云端同步失败：${result.message}`, 'error');
         return; // schedule 推送失败 → 不推 taskStats（B4 串行回滚）
       }
 
@@ -363,31 +360,29 @@ export default function Schedule() {
   /* 表单提交 */
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!canWrite) { setError('仅管理员可增改验证计划'); return; }
-    setError('');
-
+    if (!canWrite) { showToast('仅管理员可增改验证计划', 'warning'); return; }
     const name = form.engineer_name.trim();
-    if (!name) { setError('请填写负责人'); return; }
-    if (!form.start_date) { setError('请选择开始日期'); return; }
-    if (!form.report_deadline) { setError('请选择报告截止日期'); return; }
+    if (!name) { showToast('请填写负责人', 'warning'); return; }
+    if (!form.start_date) { showToast('请选择开始日期', 'warning'); return; }
+    if (!form.report_deadline) { showToast('请选择报告截止日期', 'warning'); return; }
 
     /* 编辑模式：仅第 1 个批次框生效；新增模式：4 个批次一组 */
     const batches = (editId !== null ? form.batches.slice(0, 1) : form.batches)
       .map((b) => b.trim())
       .filter(Boolean);
-    if (batches.length === 0) { setError('请至少填写一个批次号'); return; }
+    if (batches.length === 0) { showToast('请至少填写一个批次号', 'warning'); return; }
 
     /* 组内批次号查重 */
     const seen = new Set<string>();
     for (const b of batches) {
-      if (seen.has(b)) { setError(`批次号重复：${b}`); return; }
+      if (seen.has(b)) { showToast(`批次号重复：${b}`, 'warning'); return; }
       seen.add(b);
     }
 
     /* 基准批次必须落在已填写的批次上 */
     const baselineBatch = form.baselineIndex !== null ? form.batches[form.baselineIndex]?.trim() : '';
     if (form.baselineIndex !== null && (!baselineBatch || !batches.includes(baselineBatch))) {
-      setError('基准批次对应的批次号不能为空'); return;
+      showToast('基准批次对应的批次号不能为空', 'warning'); return;
     }
 
     /* 邮箱不再录入，自动沿用已保存负责人的邮箱（无则留空，保持数据兼容） */
@@ -406,7 +401,7 @@ export default function Schedule() {
           // C2: 编辑模式下基准标记直接取 form.baselineIndex 是否选中
           is_baseline: form.baselineIndex !== null ? 1 : 0,
         });
-        setMsg('验证计划条目已更新');
+        showToast('验证计划条目已更新');
       } else {
         /* C1: 同组批次生成共享 group_id（时间戳+随机后缀） */
         const groupId = `grp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -427,7 +422,7 @@ export default function Schedule() {
             group_id: groupId,
           });
         }
-        setMsg(`已添加 ${batches.length} 条验证计划${baselineBatch ? `（基准：${baselineBatch}）` : ''}`);
+        showToast(`已添加 ${batches.length} 条验证计划${baselineBatch ? `（基准：${baselineBatch}）` : ''}`);
       }
       persistEngineer(name, email);
       setForm(emptyForm());
@@ -435,9 +430,8 @@ export default function Schedule() {
       setEditId(null);
       setItems(querySchedules());
       syncToCloud();
-      setTimeout(() => setMsg(''), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存失败');
+      showToast(err instanceof Error ? err.message : '保存失败', 'error');
     }
   };
 
@@ -457,13 +451,11 @@ export default function Schedule() {
     });
     /* 已保存的截止日期与默认值不一致 → 视为手动指定，改开始日期时不覆盖 */
     setDeadlineManual(item.report_deadline !== addWorkingDays(item.start_date, DEADLINE_WORKING_DAYS));
-    setError('');
-    setMsg('');
   };
 
   /* 删除（C1: 支持 group_id 整组删除提示） */
   const handleDelete = async (item: ScheduleItem) => {
-    if (!canWrite) { setError('仅管理员可删除验证计划'); return; }
+    if (!canWrite) { showToast('仅管理员可删除验证计划', 'warning'); return; }
     // 同组其他记录
     const groupSiblings = item.group_id
       ? querySchedules().filter((s) => s.group_id === item.group_id && s.id !== item.id)
@@ -495,7 +487,7 @@ export default function Schedule() {
 
   /* 状态切换（C4: 同组状态联动——标记完成时提示是否整组完成） */
   const handleStatus = async (item: ScheduleItem) => {
-    if (!canWrite) { setError('仅管理员可变更验证计划状态'); return; }
+    if (!canWrite) { showToast('仅管理员可变更验证计划状态', 'warning'); return; }
     const next: ScheduleItem['status'] =
       item.status === 'planned' ? 'in_progress' : item.status === 'in_progress' ? 'completed' : 'planned';
     await updateSchedule(item.id, { status: next });
@@ -544,15 +536,7 @@ export default function Schedule() {
         actions={
           <button
             onClick={async () => {
-              setMsg('正在同步…');
-              setError('');
               await syncToCloud();
-              setTimeout(() => {
-                setMsg((prev) => {
-                  if (prev === '正在同步…') return '';
-                  return prev;
-                });
-              }, 500);
             }}
             disabled={syncing}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-60"
@@ -896,9 +880,6 @@ export default function Schedule() {
             </div>
           )}
 
-          {error && <p className="text-xs text-red-500">{error}</p>}
-          {msg && <p className="text-xs text-emerald-600">{msg}</p>}
-
           <div className="flex items-center gap-3">
             <Button type="submit">
               {editId !== null ? '更新验证计划' : '添加验证计划'}
@@ -910,7 +891,6 @@ export default function Schedule() {
                   setEditId(null);
                   setForm(emptyForm());
                   setDeadlineManual(false);
-                  setError('');
                 }}
               >
                 取消编辑
