@@ -42,5 +42,49 @@
     "status": "planned",
     "notes": null,
     "is_baseline": 1
+  },
+  {
+    "batch_id": "DI418A2-01",
+    "material_type": "",
+    "engineer_name": "覃军玉",
+    "engineer_email": "",
+    "start_date": "2026-08-25",
+    "report_deadline": "2026-08-27",
+    "status": "planned",
+    "notes": null,
+    "is_baseline": 0
+  },
+  {
+    "batch_id": "DI609B2-6B",
+    "material_type": "",
+    "engineer_name": "覃军玉",
+    "engineer_email": "",
+    "start_date": "2026-08-25",
+    "report_deadline": "2026-08-27",
+    "status": "planned",
+    "notes": null,
+    "is_baseline": 0
+  },
+  {
+    "batch_id": "131S-01",
+    "material_type": "",
+    "engineer_name": "覃军玉",
+    "engineer_email": "",
+    "start_date": "2026-08-25",
+    "report_deadline": "2026-08-27",
+    "status": "planned",
+    "notes": null,
+    "is_baseline": 0
+  },
+  {
+    "batch_id": "YAN",
+    "material_type": "",
+    "engineer_name": "覃军玉",
+    "engineer_email": "",
+    "start_date": "2026-08-25",
+    "report_deadline": "2026-08-27",
+    "status": "planned",
+    "notes": null,
+    "is_baseline": 1
   }
 ]
