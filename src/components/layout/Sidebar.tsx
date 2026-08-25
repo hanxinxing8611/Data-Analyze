@@ -13,7 +13,6 @@ const NAV_ITEMS = [
   { to: '/data', label: '数据管理', icon: 'database', end: false },
   { to: '/schedule', label: '验证计划', icon: 'calendar', end: false },
   { to: '/stats', label: '任务统计', icon: 'barchart', end: false },
-  { to: '/storage', label: '数据存储', icon: 'storage', end: false },
   { to: '/comparison', label: '对比分析', icon: 'chart', end: false },
   { to: '/report', label: '报告生成', icon: 'file', end: false },
   { to: '/settings', label: '系统设置', icon: 'settings', end: false },

@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS schedule (
     report_deadline TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'planned',
     notes           TEXT,
+    is_baseline     INTEGER DEFAULT 0,
     created_at      TEXT DEFAULT (datetime('now', 'localtime'))
 );
 `;

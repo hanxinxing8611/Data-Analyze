@@ -5,46 +5,7 @@ import {
   exportDatabaseBackup,
   importDatabaseBackup,
 } from '../database/backup';
-import { Button, Card, PageHeader } from '../components/ui';
-
-/* ================= 存储概览 ================= */
-
-function StorageOverview() {
-  const stats = queryDashboardStats();
-  const items = [
-    { label: '材料批次', value: String(stats.totalBatches), unit: '个' },
-    { label: '样本记录', value: String(stats.totalSamples), unit: '条' },
-    {
-      label: '平均效率',
-      value: stats.avgEfficiency === null ? '—' : stats.avgEfficiency.toFixed(2),
-      unit: '%',
-    },
-    {
-      label: '最高效率',
-      value: stats.maxEfficiency === null ? '—' : stats.maxEfficiency.toFixed(2),
-      unit: '%',
-    },
-  ];
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      {items.map((it) => (
-        <div
-          key={it.label}
-          className="rounded-xl border border-slate-100 bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
-        >
-          <div className="text-xs text-slate-400">{it.label}</div>
-          <div
-            className="mt-1 text-[36px] font-semibold leading-none tracking-tight text-slate-800"
-            style={{ fontFamily: "'Century Gothic', 'Apple Gothic', 'Questrial', sans-serif" }}
-          >
-            {it.value}
-            <span className="ml-0.5 text-xs font-normal text-slate-400">{it.unit}</span>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
+import { Button, Card } from '../components/ui';
 
 /* ================= 数据库备份卡片 ================= */
 
@@ -143,10 +104,10 @@ function BackupCard() {
   );
 }
 
-/* ================= 数据存储页主体 ================= */
+/* ================= 数据存储区块（嵌入数据总览页底部） ================= */
 
-/** 数据存储页：数据库说明、备份导入导出与数据清空（工程师可直接操作，数据仅存本地） */
-export default function DataStorage() {
+/** 数据存储区块：数据库说明、备份导入导出与数据清空（工程师可直接操作，数据仅存本地） */
+export default function StorageSection() {
   const { refresh } = useData();
   const [cleared, setCleared] = useState(false);
 
@@ -161,43 +122,34 @@ export default function DataStorage() {
   };
 
   return (
-    <div>
-      <PageHeader
-        title="数据存储"
-        description="数据库与备份均保存在本地浏览器，不上传任何服务器"
-      />
+    <div className="space-y-6">
+      <Card title="存储说明">
+        <div className="space-y-3 text-sm text-slate-600">
+          <p>
+            数据以 SQLite 格式存储于浏览器 IndexedDB 中，全部在本地运行，不会上传到任何服务器。
+            每次数据变更后自动保存，关闭页面不会丢失数据。
+          </p>
+          <p className="text-xs text-slate-400">
+            注意：清除浏览器站点数据（Cookie / 站点数据）会同时删除已导入的数据库，请定期「导出备份」妥善保存。
+          </p>
+        </div>
+      </Card>
 
-      <div className="space-y-6">
-        <StorageOverview />
+      <BackupCard />
 
-        <Card title="存储说明">
-          <div className="space-y-3 text-sm text-slate-600">
-            <p>
-              数据以 SQLite 格式存储于浏览器 IndexedDB 中，全部在本地运行，不会上传到任何服务器。
-              每次数据变更后自动保存，关闭页面不会丢失数据。
-            </p>
-            <p className="text-xs text-slate-400">
-              注意：清除浏览器站点数据（Cookie / 站点数据）会同时删除已导入的数据库，请定期「导出备份」妥善保存。
+      <Card title="危险操作">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-slate-700">清空全部数据</p>
+            <p className="mt-0.5 text-xs text-slate-400">
+              删除所有材料批次、样本记录与 IV 曲线数据，数据库结构保留
             </p>
           </div>
-        </Card>
-
-        <BackupCard />
-
-        <Card title="危险操作">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-slate-700">清空全部数据</p>
-              <p className="mt-0.5 text-xs text-slate-400">
-                删除所有材料批次、样本记录与 IV 曲线数据，数据库结构保留
-              </p>
-            </div>
-            <Button variant="danger" onClick={handleReset}>
-              {cleared ? '已清空' : '清空数据'}
-            </Button>
-          </div>
-        </Card>
-      </div>
+          <Button variant="danger" onClick={handleReset}>
+            {cleared ? '已清空' : '清空数据'}
+          </Button>
+        </div>
+      </Card>
     </div>
   );
 }

@@ -20,20 +20,6 @@ import { Button, Card, EmptyState, Loading, PageHeader, Badge } from '../compone
 import GanttChart from '../components/charts/GanttChart';
 import type { ScheduleItem } from '../types';
 
-/* ---- 产品名称选项 ---- */
-
-const PRODUCT_OPTIONS = [
-  'α-FAPbI3',
-  'MAPbI3',
-  'CsPbI3',
-  'FAPbBr3',
-  'MAPbBr3',
-  'CsPbBr3',
-  'δ-FAPbI3',
-  'PbI2',
-  'C60',
-];
-
 /* ---- 工程师列表（本地自动保存，读取逻辑统一在 permissions.ts） ---- */
 
 const ENGINEERS_KEY = 'dv-engineers';
@@ -92,21 +78,28 @@ function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/* ---- 表单初始值 ---- */
+/* ---- 表单 ---- */
 
-function emptyForm(): {
-  batch_id: string;
-  material_type: string;
+/** 一组验证计划的批次数量 */
+const BATCH_GROUP_SIZE = 4;
+
+interface ScheduleForm {
+  /** 批次号（一组 4 个，允许留空跳过） */
+  batches: string[];
+  /** 基准批次在组内的下标（null = 未指定基准） */
+  baselineIndex: number | null;
   engineer_name: string;
   start_date: string;
   report_deadline: string;
   status: ScheduleItem['status'];
   notes: string;
-} {
+}
+
+function emptyForm(): ScheduleForm {
   const today = todayStr();
   return {
-    batch_id: '',
-    material_type: '',
+    batches: Array.from({ length: BATCH_GROUP_SIZE }, () => ''),
+    baselineIndex: null,
     engineer_name: '',
     start_date: today,
     // 截止日期默认 = 开始日期 + 2 个工作日（可手动修改）
@@ -177,7 +170,7 @@ function ReminderModal({
                       <span className="font-mono text-sm font-semibold text-slate-900">
                         {it.batch_id}
                       </span>
-                      <span className="text-xs text-slate-500">{it.material_type}</span>
+                      {!!it.is_baseline && <Badge tone="blue">基准</Badge>}
                     </div>
                     <Badge tone={overdue ? 'red' : 'amber'}>
                       {overdue ? '逾期' : '今日到期'}
@@ -341,41 +334,65 @@ export default function Schedule() {
     e.preventDefault();
     if (!canWrite) { setError('仅管理员可增改验证计划'); return; }
     setError('');
-    if (!form.batch_id.trim()) { setError('请填写批次号'); return; }
-    if (!form.material_type) { setError('请选择产品名称'); return; }
-    if (!form.engineer_name.trim()) { setError('请填写负责人'); return; }
+
+    const name = form.engineer_name.trim();
+    if (!name) { setError('请填写负责人'); return; }
     if (!form.start_date) { setError('请选择开始日期'); return; }
     if (!form.report_deadline) { setError('请选择报告截止日期'); return; }
 
+    /* 编辑模式：仅第 1 个批次框生效；新增模式：4 个批次一组 */
+    const batches = (editId !== null ? form.batches.slice(0, 1) : form.batches)
+      .map((b) => b.trim())
+      .filter(Boolean);
+    if (batches.length === 0) { setError('请至少填写一个批次号'); return; }
+
+    /* 组内批次号查重 */
+    const seen = new Set<string>();
+    for (const b of batches) {
+      if (seen.has(b)) { setError(`批次号重复：${b}`); return; }
+      seen.add(b);
+    }
+
+    /* 基准批次必须落在已填写的批次上 */
+    const baselineBatch = form.baselineIndex !== null ? form.batches[form.baselineIndex]?.trim() : '';
+    if (form.baselineIndex !== null && (!baselineBatch || !batches.includes(baselineBatch))) {
+      setError('基准批次对应的批次号不能为空'); return;
+    }
+
     /* 邮箱不再录入，自动沿用已保存负责人的邮箱（无则留空，保持数据兼容） */
-    const name = form.engineer_name.trim();
     const email = engineers.find((en) => en.name === name)?.email ?? '';
 
     try {
       if (editId !== null) {
         await updateSchedule(editId, {
-          batch_id: form.batch_id.trim(),
-          material_type: form.material_type,
+          batch_id: batches[0],
           engineer_name: name,
           engineer_email: email,
           start_date: form.start_date,
           report_deadline: form.report_deadline,
           status: form.status,
           notes: form.notes || null,
+          is_baseline: form.baselineIndex === 0 ? 1 : 0,
         });
         setMsg('验证计划条目已更新');
       } else {
-        await insertSchedule({
-          batch_id: form.batch_id.trim(),
-          material_type: form.material_type,
-          engineer_name: name,
-          engineer_email: email,
-          start_date: form.start_date,
-          report_deadline: form.report_deadline,
-          status: form.status,
-          notes: form.notes || null,
-        });
-        setMsg('验证计划条目已添加');
+        /* 一组批次逐条插入，共享负责人/日期/备注；选中者标记为基准 */
+        for (let i = 0; i < form.batches.length; i++) {
+          const b = form.batches[i].trim();
+          if (!b) continue;
+          await insertSchedule({
+            batch_id: b,
+            material_type: '',
+            engineer_name: name,
+            engineer_email: email,
+            start_date: form.start_date,
+            report_deadline: form.report_deadline,
+            status: form.status,
+            notes: form.notes || null,
+            is_baseline: i === form.baselineIndex ? 1 : 0,
+          });
+        }
+        setMsg(`已添加 ${batches.length} 条验证计划${baselineBatch ? `（基准：${baselineBatch}）` : ''}`);
       }
       persistEngineer(name, email);
       setForm(emptyForm());
@@ -392,9 +409,11 @@ export default function Schedule() {
   /* 编辑 */
   const handleEdit = (item: ScheduleItem) => {
     setEditId(item.id);
+    const next = emptyForm();
     setForm({
-      batch_id: item.batch_id,
-      material_type: item.material_type,
+      ...next,
+      batches: [item.batch_id, ...next.batches.slice(1)],
+      baselineIndex: item.is_baseline ? 0 : null,
       engineer_name: item.engineer_name,
       start_date: item.start_date,
       report_deadline: item.report_deadline,
@@ -431,12 +450,6 @@ export default function Schedule() {
   };
 
   if (!dbReady) return <Loading text="数据库初始化中…" />;
-
-  /* 旧数据的产品名称可能不在固定选项中，编辑时动态补充显示 */
-  const extraProduct =
-    form.material_type && !PRODUCT_OPTIONS.includes(form.material_type)
-      ? form.material_type
-      : null;
 
   return (
     <div>
@@ -530,7 +543,6 @@ export default function Schedule() {
               <thead className="sticky top-0 bg-slate-50">
                 <tr>
                   <th>批次</th>
-                  <th>产品名称</th>
                   <th>负责人</th>
                   <th>开始</th>
                   <th>截止</th>
@@ -543,8 +555,14 @@ export default function Schedule() {
                   const overdue = it.status !== 'completed' && it.report_deadline < todayStr();
                   return (
                     <tr key={it.id} className={overdue ? 'bg-red-50' : ''}>
-                      <td className="font-mono font-medium">{it.batch_id}</td>
-                      <td>{it.material_type}</td>
+                      <td>
+                        <span className="flex items-center gap-1.5">
+                          <span className="font-mono font-medium">{it.batch_id}</span>
+                          {!!it.is_baseline && (
+                            <Badge tone="blue">基准</Badge>
+                          )}
+                        </span>
+                      </td>
                       <td>{it.engineer_name}</td>
                       <td className="font-mono text-xs">{it.start_date}</td>
                       <td className={`font-mono text-xs ${overdue ? 'font-semibold text-red-600' : ''}`}>
@@ -618,34 +636,55 @@ export default function Schedule() {
         <Card title={editId !== null ? '编辑验证计划' : '新增验证计划'} className="mt-4">
           <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            {/* 批次号（手工录入） */}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">批次号</label>
-              <input
-                type="text"
-                value={form.batch_id}
-                onChange={(e) => setForm({ ...form, batch_id: e.target.value })}
-                placeholder="手工录入，例如：CB615W1"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-            </div>
-
-            {/* 产品名称（下拉选择） */}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">产品名称</label>
-              <select
-                value={form.material_type}
-                onChange={(e) => setForm({ ...form, material_type: e.target.value })}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="">请选择产品名称</option>
-                {extraProduct && <option value={extraProduct}>{extraProduct}</option>}
-                {PRODUCT_OPTIONS.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
+            {/* 批次号组（新增：4 个一组 + 基准单选；编辑：单批次） */}
+            <div className="col-span-2">
+              <label className="mb-1 block text-xs font-medium text-slate-600">
+                {editId !== null
+                  ? '批次号'
+                  : `批次号（一组 ${BATCH_GROUP_SIZE} 个，至少填写 1 个）`}
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {(editId !== null ? [form.batches[0]] : form.batches).map((b, idx) => {
+                  const i = editId !== null ? 0 : idx;
+                  return (
+                    <div key={i} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={b}
+                        onChange={(e) => {
+                          const batches = [...form.batches];
+                          batches[i] = e.target.value;
+                          setForm({ ...form, batches });
+                        }}
+                        placeholder={`批次 ${i + 1}，例如：CB615W${i + 1}`}
+                        className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                      <label
+                        className="flex shrink-0 cursor-pointer select-none items-center gap-1 text-xs text-slate-500 hover:text-blue-600"
+                        title="将该批次设为基准"
+                      >
+                        <input
+                          type="radio"
+                          name="baseline-batch"
+                          className="accent-blue-600"
+                          checked={form.baselineIndex === i}
+                          onClick={() =>
+                            setForm((prev) => ({
+                              ...prev,
+                              baselineIndex: prev.baselineIndex === i ? null : i,
+                            }))
+                          }
+                          readOnly
+                        />
+                        基准
+                      </label>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-1 text-[11px] text-slate-400">
+                同组批次共享负责人、日期与备注；勾选「基准」可将该批次标记为基准批次（可留空不选）
+              </p>
             </div>
 
             {/* 负责人（可输入 + 已保存建议） */}

@@ -6,6 +6,7 @@ import { queryBatches, queryDashboardStats, querySamples, querySchedules } from 
 import { fmt, median } from '../utils/statistics';
 import { isValidDevice, metricValue } from '../report/reportData';
 import { Badge, Button, Card, EmptyState, Loading, PageHeader, StatCard } from '../components/ui';
+import StorageSection from './DataStorage';
 import type { BatchSummary, SampleRecord, ScheduleItem } from '../types';
 
 /* ---- 弹窗提醒 ---- */
@@ -56,7 +57,7 @@ function ReminderModal({
                       <span className="font-mono text-sm font-semibold text-slate-900">
                         {it.batch_id}
                       </span>
-                      <span className="text-xs text-slate-500">{it.material_type}</span>
+                      {!!it.is_baseline && <Badge tone="blue">基准</Badge>}
                     </div>
                     <Badge tone={overdue ? 'red' : 'amber'}>
                       {overdue ? '逾期' : '今日到期'}
@@ -266,6 +267,17 @@ export default function Dashboard() {
           </Card>
         </>
       )}
+
+      {/* 数据存储（存储说明 / 备份导入导出 / 清空数据） */}
+      <div className="mt-8">
+        <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-lg font-semibold tracking-tight text-slate-800">数据存储</h2>
+          <span className="text-xs text-slate-400">
+            数据库与备份均保存在本地浏览器，不上传任何服务器
+          </span>
+        </div>
+        <StorageSection />
+      </div>
     </div>
   );
 }

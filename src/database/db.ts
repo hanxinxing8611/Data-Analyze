@@ -45,6 +45,12 @@ export function getDB(): Promise<Database> {
     } catch {
       /* 列已存在 */
     }
+    // 迁移：旧库 schedule 表补充 is_baseline 列（基准批次标记）
+    try {
+      db.exec('ALTER TABLE schedule ADD COLUMN is_baseline INTEGER DEFAULT 0');
+    } catch {
+      /* 列已存在 */
+    }
     // 迁移：旧结构批次号（材料码-器件号，如 CB615W1-1）自动归并为材料码批次
     const migration = migrateMaterialBatches(db);
     if (migration.mergedBatches > 0) {
@@ -395,7 +401,7 @@ export function querySchedules(): ScheduleItem[] {
   if (!db) return [];
   const res = db.exec(
     `SELECT id, batch_id, material_type, engineer_name, engineer_email,
-            start_date, report_deadline, status, notes, created_at
+            start_date, report_deadline, status, notes, is_baseline, created_at
      FROM schedule ORDER BY start_date DESC`,
   ) as unknown as QueryResult[];
   return rowsToObjects<ScheduleItem>(res);
@@ -405,9 +411,9 @@ export function querySchedules(): ScheduleItem[] {
 export async function insertSchedule(item: Omit<ScheduleItem, 'id' | 'created_at'>): Promise<void> {
   const database = await getDB();
   database.run(
-    `INSERT INTO schedule (batch_id, material_type, engineer_name, engineer_email, start_date, report_deadline, status, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [item.batch_id, item.material_type, item.engineer_name, item.engineer_email, item.start_date, item.report_deadline, item.status, item.notes ?? null],
+    `INSERT INTO schedule (batch_id, material_type, engineer_name, engineer_email, start_date, report_deadline, status, notes, is_baseline)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [item.batch_id, item.material_type, item.engineer_name, item.engineer_email, item.start_date, item.report_deadline, item.status, item.notes ?? null, item.is_baseline ?? 0],
   );
   await saveDB();
 }
@@ -440,9 +446,9 @@ export async function replaceAllSchedules(items: Array<Omit<ScheduleItem, 'id' |
   database.run('DELETE FROM schedule');
   for (const item of items) {
     database.run(
-      `INSERT INTO schedule (batch_id, material_type, engineer_name, engineer_email, start_date, report_deadline, status, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [item.batch_id, item.material_type, item.engineer_name, item.engineer_email, item.start_date, item.report_deadline, item.status, item.notes ?? null],
+      `INSERT INTO schedule (batch_id, material_type, engineer_name, engineer_email, start_date, report_deadline, status, notes, is_baseline)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [item.batch_id, item.material_type, item.engineer_name, item.engineer_email, item.start_date, item.report_deadline, item.status, item.notes ?? null, item.is_baseline ?? 0],
     );
   }
   await saveDB();

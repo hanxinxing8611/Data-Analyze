@@ -5,7 +5,6 @@ import { SelectionProvider } from './store/SelectionContext';
 import AppLayout from './components/layout/AppLayout';
 import Dashboard from './pages/Dashboard';
 import DataManagement from './pages/DataManagement';
-import DataStorage from './pages/DataStorage';
 import Comparison from './pages/Comparison';
 import ReportEditor from './pages/ReportEditor';
 import Schedule from './pages/Schedule';
@@ -22,9 +21,9 @@ export default function App() {
               <Route element={<AppLayout />}>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/data" element={<DataManagement />} />
-                <Route path="/storage" element={<DataStorage />} />
                 <Route path="/import" element={<Navigate to="/data" replace />} />
                 <Route path="/browser" element={<Navigate to="/data" replace />} />
+                <Route path="/storage" element={<Navigate to="/" replace />} />
                 <Route path="/comparison" element={<Comparison />} />
                 <Route path="/report" element={<ReportEditor />} />
                 <Route path="/schedule" element={<Schedule />} />
