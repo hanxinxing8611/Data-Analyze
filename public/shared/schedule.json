@@ -8,7 +8,8 @@
     "report_deadline": "2026-08-27",
     "status": "in_progress",
     "notes": null,
-    "is_baseline": 0
+    "is_baseline": 0,
+    "group_id": null
   },
   {
     "batch_id": "C521W-Y2",
@@ -19,7 +20,8 @@
     "report_deadline": "2026-08-27",
     "status": "in_progress",
     "notes": null,
-    "is_baseline": 0
+    "is_baseline": 0,
+    "group_id": null
   },
   {
     "batch_id": "C521W-Y3",
@@ -28,9 +30,10 @@
     "engineer_email": "",
     "start_date": "2026-08-25",
     "report_deadline": "2026-08-27",
-    "status": "planned",
+    "status": "in_progress",
     "notes": null,
-    "is_baseline": 0
+    "is_baseline": 0,
+    "group_id": null
   },
   {
     "batch_id": "BL",
@@ -41,7 +44,8 @@
     "report_deadline": "2026-08-27",
     "status": "in_progress",
     "notes": null,
-    "is_baseline": 1
+    "is_baseline": 1,
+    "group_id": null
   },
   {
     "batch_id": "DI418A2-01",
@@ -52,7 +56,8 @@
     "report_deadline": "2026-08-27",
     "status": "in_progress",
     "notes": null,
-    "is_baseline": 0
+    "is_baseline": 0,
+    "group_id": null
   },
   {
     "batch_id": "DI609B2-6B",
@@ -63,7 +68,8 @@
     "report_deadline": "2026-08-27",
     "status": "in_progress",
     "notes": null,
-    "is_baseline": 0
+    "is_baseline": 0,
+    "group_id": null
   },
   {
     "batch_id": "131S-01",
@@ -74,7 +80,8 @@
     "report_deadline": "2026-08-27",
     "status": "in_progress",
     "notes": null,
-    "is_baseline": 0
+    "is_baseline": 0,
+    "group_id": null
   },
   {
     "batch_id": "YAN",
@@ -85,7 +92,8 @@
     "report_deadline": "2026-08-27",
     "status": "in_progress",
     "notes": null,
-    "is_baseline": 1
+    "is_baseline": 1,
+    "group_id": null
   },
   {
     "batch_id": "DI0818A1",
@@ -96,7 +104,8 @@
     "report_deadline": "2026-08-27",
     "status": "in_progress",
     "notes": null,
-    "is_baseline": 0
+    "is_baseline": 0,
+    "group_id": null
   },
   {
     "batch_id": "DI0818Y2",
@@ -107,7 +116,8 @@
     "report_deadline": "2026-08-27",
     "status": "in_progress",
     "notes": null,
-    "is_baseline": 0
+    "is_baseline": 0,
+    "group_id": null
   },
   {
     "batch_id": "131S-01",
@@ -118,7 +128,8 @@
     "report_deadline": "2026-08-27",
     "status": "in_progress",
     "notes": null,
-    "is_baseline": 0
+    "is_baseline": 0,
+    "group_id": null
   },
   {
     "batch_id": "YAN",
@@ -129,6 +140,7 @@
     "report_deadline": "2026-08-27",
     "status": "in_progress",
     "notes": null,
-    "is_baseline": 1
+    "is_baseline": 1,
+    "group_id": null
   }
 ]
