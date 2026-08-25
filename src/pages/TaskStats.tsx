@@ -83,6 +83,64 @@ export default function TaskStats() {
   const getRealOverdue = (engineerName: string) =>
     cloudSchedules.filter((s) => s.engineer_name === engineerName && s.status !== 'completed' && s.report_deadline < today).length;
 
+  /* ---- 按周/按月切换 ---- */
+  type ChartMode = 'week' | 'month';
+  const [chartMode, setChartMode] = useState<ChartMode>('week');
+
+  /* 各工程师按时段批次数（基于云端验证计划的 start_date） */
+  const periodChartData = useMemo(() => {
+    if (cloudSchedules.length === 0) return null;
+
+    const engineers = [...new Set(cloudSchedules.map((s) => s.engineer_name))].sort();
+
+    function getPeriodKey(dateStr: string): { key: string; label: string } {
+      const d = new Date(dateStr + 'T00:00:00');
+      if (chartMode === 'month') {
+        return {
+          key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+          label: `${d.getMonth() + 1}月`,
+        };
+      }
+      // Week: get Monday date
+      const day = d.getDay();
+      const monday = new Date(d);
+      monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+      const startOfYear = new Date(monday.getFullYear(), 0, 1);
+      const weekNum = Math.ceil(
+        ((monday.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7,
+      );
+      return {
+        key: `${monday.getFullYear()}-W${String(weekNum).padStart(2, '0')}`,
+        label: `${monday.getMonth() + 1}/${monday.getDate()}`,
+      };
+    }
+
+    // periodKey → { label, engineer → Set<batchId> }
+    const periodMap = new Map<string, { label: string; engineers: Map<string, Set<string>> }>();
+    for (const s of cloudSchedules) {
+      if (!s.start_date) continue;
+      const { key, label } = getPeriodKey(s.start_date);
+      if (!periodMap.has(key)) {
+        periodMap.set(key, { label, engineers: new Map() });
+      }
+      const entry = periodMap.get(key)!;
+      if (!entry.engineers.has(s.engineer_name)) {
+        entry.engineers.set(s.engineer_name, new Set());
+      }
+      entry.engineers.get(s.engineer_name)!.add(s.batch_id);
+    }
+
+    const periods = [...periodMap.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, { label }]) => ({ key, label }));
+
+    const data = engineers.map((name) =>
+      periods.map((p) => periodMap.get(p.key)?.engineers.get(name)?.size ?? 0),
+    );
+
+    return { engineers, periods, data };
+  }, [cloudSchedules, chartMode]);
+
   /* 进度条色阶 */
   function progressColor(ratio: number): string {
     if (ratio >= 0.8) return 'bg-emerald-500';
@@ -290,6 +348,141 @@ export default function TaskStats() {
           </p>
         </div>
       </Card>
+
+      {/* 验证批次数对比（按周/按月） */}
+      {periodChartData && periodChartData.periods.length > 0 && (() => {
+        const { engineers, periods, data } = periodChartData;
+        const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#84CC16', '#F97316', '#6366F1', '#14B8A6', '#D946EF'];
+        const MARGIN = { top: 30, right: 24, bottom: 60, left: 44 };
+        const PLOT_H = 280;
+        const PLOT_W = Math.max(600, engineers.length * 90 + 40);
+        const CHART_W = PLOT_W + MARGIN.left + MARGIN.right;
+        const CHART_H = PLOT_H + MARGIN.top + MARGIN.bottom;
+        const maxVal = Math.max(1, ...data.flat());
+        const yMax = Math.ceil(maxVal * 1.15);
+        const yTicks = yMax <= 5 ? yMax : Math.ceil(yMax / 2) * 2;
+        const groupW = PLOT_W / engineers.length;
+        const barCount = periods.length;
+        const barGap = 3;
+        const barW = Math.max(4, (groupW * 0.7 - barGap * (barCount - 1)) / barCount);
+
+        return (
+          <Card title="验证批次数对比" className="mt-4" bodyClassName="pb-2">
+            {/* 切换按钮 */}
+            <div className="mb-3 flex items-center gap-1">
+              <button
+                onClick={() => setChartMode('week')}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  chartMode === 'week'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                按周
+              </button>
+              <button
+                onClick={() => setChartMode('month')}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  chartMode === 'month'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                按月
+              </button>
+            </div>
+
+            <div className="overflow-auto">
+              <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} width={CHART_W} height={CHART_H} style={{ minWidth: '100%' }} fontFamily="Arial, 'Microsoft YaHei', sans-serif">
+                {/* Y-axis grid lines */}
+                {Array.from({ length: yTicks + 1 }, (_, i) => {
+                  const y = MARGIN.top + PLOT_H - (i / yTicks) * PLOT_H;
+                  return (
+                    <g key={i}>
+                      <line x1={MARGIN.left} y1={y} x2={MARGIN.left + PLOT_W} y2={y} stroke="#E2E8F0" strokeWidth={1} />
+                      <text x={MARGIN.left - 6} y={y + 4} textAnchor="end" fill="#94A3B8" fontSize={11}>
+                        {i}
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {/* X-axis line */}
+                <line x1={MARGIN.left} y1={MARGIN.top + PLOT_H} x2={MARGIN.left + PLOT_W} y2={MARGIN.top + PLOT_H} stroke="#CBD5E1" strokeWidth={1} />
+
+                {/* Bars */}
+                {engineers.map((eng, ei) => {
+                  const gx = MARGIN.left + ei * groupW + groupW * 0.15;
+                  return periods.map((p, pi) => {
+                    const val = data[ei][pi];
+                    if (val === 0) return null;
+                    const barH = (val / yTicks) * PLOT_H;
+                    const bx = gx + pi * (barW + barGap);
+                    const by = MARGIN.top + PLOT_H - barH;
+                    return (
+                      <g key={`${ei}-${pi}`}>
+                        <rect
+                          x={bx}
+                          y={by}
+                          width={barW}
+                          height={barH}
+                          rx={2}
+                          fill={COLORS[pi % COLORS.length]}
+                          opacity={0.88}
+                        />
+                        {/* Value label on top of bar */}
+                        <text
+                          x={bx + barW / 2}
+                          y={by - 4}
+                          textAnchor="middle"
+                          fill="#475569"
+                          fontSize={10}
+                          fontWeight={600}
+                        >
+                          {val}
+                        </text>
+                      </g>
+                    );
+                  });
+                })}
+
+                {/* X-axis engineer labels */}
+                {engineers.map((eng, ei) => {
+                  const cx = MARGIN.left + ei * groupW + groupW / 2;
+                  return (
+                    <text
+                      key={eng}
+                      x={cx}
+                      y={MARGIN.top + PLOT_H + 20}
+                      textAnchor="middle"
+                      fill="#334155"
+                      fontSize={12}
+                      fontWeight={600}
+                    >
+                      {eng}
+                    </text>
+                  );
+                })}
+
+                {/* Legend */}
+                <g transform={`translate(${MARGIN.left}, ${MARGIN.top + PLOT_H + 42})`}>
+                  {periods.map((p, pi) => {
+                    const lx = pi * 80;
+                    return (
+                      <g key={p.key} transform={`translate(${lx}, 0)`}>
+                        <rect x={0} y={0} width={10} height={10} rx={2} fill={COLORS[pi % COLORS.length]} opacity={0.88} />
+                        <text x={14} y={9} fill="#64748B" fontSize={10}>
+                          {chartMode === 'week' ? `W${p.key.split('-W')[1]}` : p.label}
+                        </text>
+                      </g>
+                    );
+                  })}
+                </g>
+              </svg>
+            </div>
+          </Card>
+        );
+      })()}
 
       {/* 效率分布图 */}
       {stats.length > 0 && (
