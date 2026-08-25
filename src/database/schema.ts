@@ -71,14 +71,15 @@ CREATE INDEX IF NOT EXISTS idx_curve_record ON iv_curve_data(record_id);
 CREATE TABLE IF NOT EXISTS schedule (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     batch_id        TEXT NOT NULL,
-    material_type   TEXT NOT NULL,
+    material_type   TEXT,
     engineer_name   TEXT NOT NULL,
-    engineer_email  TEXT NOT NULL,
+    engineer_email  TEXT,
     start_date      TEXT NOT NULL,
     report_deadline TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'planned',
     notes           TEXT,
     is_baseline     INTEGER DEFAULT 0,
+    group_id        TEXT,
     created_at      TEXT DEFAULT (datetime('now', 'localtime'))
 );
 `;

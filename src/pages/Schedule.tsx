@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useData } from '../store/DataContext';
 import { useCriteria } from '../store/CriteriaContext';
 import {
@@ -7,9 +7,9 @@ import {
   insertSchedule,
   updateSchedule,
   deleteSchedule,
-  replaceAllSchedules,
+  mergeSchedules,
 } from '../database/db';
-import { fetchCloudSchedule, pushCloudSchedule } from '../utils/cloudSchedule';
+import { fetchCloudSchedule, pushCloudSchedule, type CloudScheduleItem } from '../utils/cloudSchedule';
 import { computeTaskStats, pushCloudTaskStats } from '../utils/cloudTaskStats';
 import {
   loadEngineerList,
@@ -218,6 +218,8 @@ export default function Schedule() {
   const [msg, setMsg] = useState('');
   const [showReminder, setShowReminder] = useState(false);
   const { canWrite } = usePermission();
+  /** 同步锁：防止并发推送（B3 防抖） */
+  const syncLock = useRef(false);
 
   useEffect(() => {
     if (!dbReady) return;
@@ -250,18 +252,29 @@ export default function Schedule() {
     }
   }, [dbReady, myDueItems.length]);
 
-  /* 页面挂载时从云端拉取最新验证计划（其他工程师可能已更新） */
+  /* 页面挂载时从云端同步验证计划（B1: 先推送本地未同步数据，再合并云端） */
   useEffect(() => {
     if (!dbReady) return;
     let cancelled = false;
     void (async () => {
       try {
+        const localItems = querySchedules();
         const cloud = await fetchCloudSchedule();
         if (!cloud || cancelled) return;
-        if (cloud.length > 0) {
-          await replaceAllSchedules(cloud);
-          setItems(querySchedules());
+
+        // 检查本地是否有云端不存在的记录（未推送的新增）
+        const cloudKeys = new Set(cloud.map((c: CloudScheduleItem) => `${c.batch_id}|${c.engineer_name}|${c.start_date}`));
+        const localOnly = localItems.filter((l) => !cloudKeys.has(`${l.batch_id}|${l.engineer_name}|${l.start_date}`));
+
+        // 本地有未同步数据 → 先推送（需要 Token）
+        if (localOnly.length > 0) {
+          const payload = localItems.map(({ id, created_at, ...rest }) => rest);
+          await pushCloudSchedule(payload);
         }
+
+        // 合并云端到本地（不删除本地独有数据）
+        await mergeSchedules(cloud);
+        setItems(querySchedules());
       } catch {
         // 静默
       }
@@ -269,27 +282,37 @@ export default function Schedule() {
     return () => { cancelled = true; };
   }, [dbReady]);
 
-  /* 推送本地排产数据到云端，同时推送任务统计 */
+  /* 推送本地排产数据到云端，同时推送任务统计（B3 防抖 + B4 串行推送） */
   const syncToCloud = async () => {
-    const all = querySchedules();
-    const payload = all.map(({ id, created_at, ...rest }) => rest);
-    const result = await pushCloudSchedule(payload);
-    if (result.ok) {
-      setMsg('已同步云端');
-      setTimeout(() => setMsg(''), 3000);
-    } else if (result.message === 'not-configured') {
-      // 未配置 Token，静默（仅本地操作）
-    } else {
-      setError(`云端同步失败：${result.message}`);
-    }
-
-    // 同步推送任务统计（基于当前本地样本数据计算）
+    if (syncLock.current) return; // B3: 防止并发推送
+    syncLock.current = true;
     try {
-      const samples = querySamples();
-      const stats = computeTaskStats(all, samples, thresholds);
-      await pushCloudTaskStats(stats);
-    } catch {
-      // 任务统计推送失败不影响主流程
+      const all = querySchedules();
+      const payload = all.map(({ id, created_at, ...rest }) => rest);
+
+      // B4: 先推 schedule，成功后才推 taskStats
+      const result = await pushCloudSchedule(payload);
+      if (result.ok) {
+        setMsg('已同步云端');
+        setTimeout(() => setMsg(''), 3000);
+      } else if (result.message === 'not-configured') {
+        // 未配置 Token，静默（仅本地操作）
+        return;
+      } else {
+        setError(`云端同步失败：${result.message}`);
+        return; // schedule 推送失败 → 不推 taskStats（B4 串行回滚）
+      }
+
+      // schedule 推送成功 → 推送任务统计
+      try {
+        const samples = querySamples();
+        const stats = computeTaskStats(all, samples, thresholds);
+        await pushCloudTaskStats(stats);
+      } catch {
+        // 任务统计推送失败不影响主流程
+      }
+    } finally {
+      syncLock.current = false;
     }
   };
 
@@ -375,11 +398,14 @@ export default function Schedule() {
           report_deadline: form.report_deadline,
           status: form.status,
           notes: form.notes || null,
-          is_baseline: form.baselineIndex === 0 ? 1 : 0,
+          // C2: 编辑模式下基准标记直接取 form.baselineIndex 是否选中
+          is_baseline: form.baselineIndex !== null ? 1 : 0,
         });
         setMsg('验证计划条目已更新');
       } else {
-        /* 一组批次逐条插入，共享负责人/日期/备注；选中者标记为基准 */
+        /* C1: 同组批次生成共享 group_id（时间戳+随机后缀） */
+        const groupId = `grp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        /* 一组批次逐条插入，共享负责人/日期/备注/group_id；选中者标记为基准 */
         for (let i = 0; i < form.batches.length; i++) {
           const b = form.batches[i].trim();
           if (!b) continue;
@@ -393,6 +419,7 @@ export default function Schedule() {
             status: form.status,
             notes: form.notes || null,
             is_baseline: i === form.baselineIndex ? 1 : 0,
+            group_id: groupId,
           });
         }
         setMsg(`已添加 ${batches.length} 条验证计划${baselineBatch ? `（基准：${baselineBatch}）` : ''}`);
@@ -429,25 +456,60 @@ export default function Schedule() {
     setMsg('');
   };
 
-  /* 删除 */
-  const handleDelete = async (id: number) => {
+  /* 删除（C1: 支持 group_id 整组删除提示） */
+  const handleDelete = async (item: ScheduleItem) => {
     if (!canWrite) { setError('仅管理员可删除验证计划'); return; }
-    if (!window.confirm('确定删除该验证计划条目？')) return;
-    await deleteSchedule(id);
+    // 同组其他记录
+    const groupSiblings = item.group_id
+      ? querySchedules().filter((s) => s.group_id === item.group_id && s.id !== item.id)
+      : [];
+    if (groupSiblings.length > 0) {
+      const batchList = groupSiblings.map((g) => g.batch_id).join('、');
+      const choice = window.confirm(
+        `该批次属于一组（同组：${batchList}）。\n点击「确定」删除整组，点击「取消」仅删除当前条目。\n（取消后在确认弹窗选择否可取消删除）`,
+      );
+      if (choice) {
+        // 删除整组
+        for (const g of groupSiblings) await deleteSchedule(g.id);
+        await deleteSchedule(item.id);
+      } else {
+        if (!window.confirm(`仅删除 ${item.batch_id}？`)) return;
+        await deleteSchedule(item.id);
+      }
+    } else {
+      if (!window.confirm('确定删除该验证计划条目？')) return;
+      await deleteSchedule(item.id);
+    }
     setItems(querySchedules());
     syncToCloud();
-    if (editId === id) {
+    if (editId === item.id) {
       setEditId(null);
       setForm(emptyForm());
     }
   };
 
-  /* 状态切换 */
+  /* 状态切换（C4: 同组状态联动——标记完成时提示是否整组完成） */
   const handleStatus = async (item: ScheduleItem) => {
     if (!canWrite) { setError('仅管理员可变更验证计划状态'); return; }
     const next: ScheduleItem['status'] =
       item.status === 'planned' ? 'in_progress' : item.status === 'in_progress' ? 'completed' : 'planned';
     await updateSchedule(item.id, { status: next });
+
+    // C4: 标记完成且属于某组时，提示是否将同组全部标记完成
+    if (next === 'completed' && item.group_id) {
+      const groupItems = querySchedules().filter(
+        (s) => s.group_id === item.group_id && s.id !== item.id && s.status !== 'completed',
+      );
+      if (groupItems.length > 0) {
+        const batchList = groupItems.map((g) => g.batch_id).join('、');
+        if (window.confirm(`同组批次 ${batchList} 尚未完成，是否一并标记为已完成？`)) {
+          for (const g of groupItems) {
+            await updateSchedule(g.id, { status: 'completed' });
+          }
+        }
+      }
+    }
+
     setItems(querySchedules());
     syncToCloud();
   };
@@ -614,7 +676,7 @@ export default function Schedule() {
                               </button>
                               <button
                                 className="text-xs text-red-500 hover:underline"
-                                onClick={() => handleDelete(it.id)}
+                                onClick={() => handleDelete(it)}
                               >
                                 删除
                               </button>

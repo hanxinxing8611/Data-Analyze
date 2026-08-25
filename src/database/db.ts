@@ -51,6 +51,12 @@ export function getDB(): Promise<Database> {
     } catch {
       /* 列已存在 */
     }
+    // 迁移：旧库 schedule 表补充 group_id 列（批次组标识）
+    try {
+      db.exec('ALTER TABLE schedule ADD COLUMN group_id TEXT');
+    } catch {
+      /* 列已存在 */
+    }
     // 迁移：旧结构批次号（材料码-器件号，如 CB615W1-1）自动归并为材料码批次
     const migration = migrateMaterialBatches(db);
     if (migration.mergedBatches > 0) {
@@ -401,7 +407,7 @@ export function querySchedules(): ScheduleItem[] {
   if (!db) return [];
   const res = db.exec(
     `SELECT id, batch_id, material_type, engineer_name, engineer_email,
-            start_date, report_deadline, status, notes, is_baseline, created_at
+            start_date, report_deadline, status, notes, is_baseline, group_id, created_at
      FROM schedule ORDER BY start_date DESC`,
   ) as unknown as QueryResult[];
   return rowsToObjects<ScheduleItem>(res);
@@ -411,9 +417,9 @@ export function querySchedules(): ScheduleItem[] {
 export async function insertSchedule(item: Omit<ScheduleItem, 'id' | 'created_at'>): Promise<void> {
   const database = await getDB();
   database.run(
-    `INSERT INTO schedule (batch_id, material_type, engineer_name, engineer_email, start_date, report_deadline, status, notes, is_baseline)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [item.batch_id, item.material_type, item.engineer_name, item.engineer_email, item.start_date, item.report_deadline, item.status, item.notes ?? null, item.is_baseline ?? 0],
+    `INSERT INTO schedule (batch_id, material_type, engineer_name, engineer_email, start_date, report_deadline, status, notes, is_baseline, group_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [item.batch_id, item.material_type ?? '', item.engineer_name, item.engineer_email ?? '', item.start_date, item.report_deadline, item.status, item.notes ?? null, item.is_baseline ?? 0, item.group_id ?? null],
   );
   await saveDB();
 }
@@ -446,10 +452,53 @@ export async function replaceAllSchedules(items: Array<Omit<ScheduleItem, 'id' |
   database.run('DELETE FROM schedule');
   for (const item of items) {
     database.run(
-      `INSERT INTO schedule (batch_id, material_type, engineer_name, engineer_email, start_date, report_deadline, status, notes, is_baseline)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [item.batch_id, item.material_type, item.engineer_name, item.engineer_email, item.start_date, item.report_deadline, item.status, item.notes ?? null, item.is_baseline ?? 0],
+      `INSERT INTO schedule (batch_id, material_type, engineer_name, engineer_email, start_date, report_deadline, status, notes, is_baseline, group_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [item.batch_id, item.material_type ?? '', item.engineer_name, item.engineer_email ?? '', item.start_date, item.report_deadline, item.status, item.notes ?? null, item.is_baseline ?? 0, item.group_id ?? null],
     );
   }
+  await saveDB();
+}
+
+/**
+ * 合并云端验证计划到本地（不删除本地独有数据，避免未推送的修改丢失）
+ * 策略：以 (batch_id, engineer_name, start_date) 为键，云端有则更新，本地独有则保留
+ */
+export async function mergeSchedules(cloudItems: Array<Omit<ScheduleItem, 'id' | 'created_at'>>): Promise<void> {
+  const database = await getDB();
+  // 本地全量
+  const localRes = database.exec(
+    `SELECT id, batch_id, engineer_name, start_date FROM schedule`,
+  ) as unknown as QueryResult[];
+  const localRows = localRes.length > 0 ? rowsToObjects<{ id: number; batch_id: string; engineer_name: string; start_date: string }>(localRes) : [];
+
+  // 云端键集合
+  const cloudKeys = new Set<string>();
+  for (const c of cloudItems) {
+    cloudKeys.add(`${c.batch_id}|${c.engineer_name}|${c.start_date}`);
+  }
+
+  // 本地独有的记录（云端没有 → 未推送的本地新增，保留）
+  const localOnlyIds = new Set<number>();
+  for (const l of localRows) {
+    const key = `${l.batch_id}|${l.engineer_name}|${l.start_date}`;
+    if (!cloudKeys.has(key)) localOnlyIds.add(l.id);
+  }
+
+  // 先删除本地中"云端有"的记录（稍后用云端数据重建），保留本地独有的
+  const idsToDelete = localRows.filter((l) => !localOnlyIds.has(l.id)).map((l) => l.id);
+  for (const id of idsToDelete) {
+    database.run('DELETE FROM schedule WHERE id = ?', [id]);
+  }
+
+  // 插入云端数据
+  for (const item of cloudItems) {
+    database.run(
+      `INSERT INTO schedule (batch_id, material_type, engineer_name, engineer_email, start_date, report_deadline, status, notes, is_baseline, group_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [item.batch_id, item.material_type ?? '', item.engineer_name, item.engineer_email ?? '', item.start_date, item.report_deadline, item.status, item.notes ?? null, item.is_baseline ?? 0, item.group_id ?? null],
+    );
+  }
+
   await saveDB();
 }

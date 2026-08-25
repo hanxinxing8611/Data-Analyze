@@ -130,11 +130,13 @@ export interface ScheduleItem {
   engineer_name: string;
   engineer_email: string;
   start_date: string; // YYYY-MM-DD
-  report_deadline: string; // YYYY-MM-DD（默认 = start_date 后第 2 个工作日，可手动修改）
+  report_deadline: string; // YYYY-MM-DD（默认 = start_date 后第 3 个工作日，可手动修改）
   status: 'planned' | 'in_progress' | 'completed';
   notes: string | null;
   /** 基准批次标记（1 = 该组中的基准，0 = 普通；旧数据无此字段） */
   is_baseline?: number;
+  /** 批次组标识（同一组新增的 4 批次共享同一 group_id；旧数据无此字段） */
+  group_id?: string | null;
   created_at: string;
 }
 

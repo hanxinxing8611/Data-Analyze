@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useData } from '../store/DataContext';
 import { useCriteria } from '../store/CriteriaContext';
-import { querySchedules, querySamples, queryBatches } from '../database/db';
+import { querySchedules, querySamples, queryBatches, mergeSchedules } from '../database/db';
 import { fetchCloudTaskStats, computeTaskStats, type CloudTaskStat } from '../utils/cloudTaskStats';
+import { fetchCloudSchedule } from '../utils/cloudSchedule';
 import { Card, Badge, Loading, PageHeader, EmptyState } from '../components/ui';
 import type { ScheduleItem, SampleRecord, BatchSummary } from '../types';
 
@@ -23,6 +24,24 @@ export default function TaskStats() {
     setSamples(querySamples());
     setBatches(queryBatches());
   }, [dbReady, version]);
+
+  /* A4: 拉取云端验证计划同步本地（确保统计数据最新） */
+  useEffect(() => {
+    if (!dbReady) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const cloud = await fetchCloudSchedule();
+        if (!cancelled && cloud && cloud.length > 0) {
+          await mergeSchedules(cloud);
+          setSchedules(querySchedules());
+        }
+      } catch {
+        // 静默
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [dbReady]);
 
   /* 拉取云端任务统计（优先使用云端预计算数据） */
   useEffect(() => {
@@ -65,6 +84,17 @@ export default function TaskStats() {
     );
   }
 
+  /* A1: 卡片数据统一从 stats 汇总 */
+  const totalBatches = stats.reduce((sum, s) => sum + s.batchCount, 0);
+  const totalTasks = stats.reduce((sum, s) => sum + s.totalTasks, 0);
+  const totalCompleted = stats.reduce((sum, s) => sum + s.completedTasks, 0);
+  const completionRate = totalTasks > 0 ? (totalCompleted / totalTasks) * 100 : 0;
+
+  /* A3: 逾期数实时计算（用当前日期重算，不依赖云端快照） */
+  const today = new Date().toISOString().slice(0, 10);
+  const getRealOverdue = (engineerName: string) =>
+    schedules.filter((s) => s.engineer_name === engineerName && s.status !== 'completed' && s.report_deadline < today).length;
+
   /* 进度条色阶 */
   function progressColor(ratio: number): string {
     if (ratio >= 0.8) return 'bg-emerald-500';
@@ -84,7 +114,7 @@ export default function TaskStats() {
         </div>
       )}
 
-      {/* 总览卡片（内容居中，数字 Arial 36px） */}
+      {/* 总览卡片（A1: 数据统一从 stats 汇总，内容居中，数字 Arial 36px） */}
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="border-blue-100 bg-blue-50/50" bodyClassName="py-4 text-center">
           <div className="text-xs text-slate-500">工程师总数</div>
@@ -101,7 +131,7 @@ export default function TaskStats() {
             className="mt-1 font-bold text-slate-900"
             style={{ fontFamily: 'Arial, "Helvetica Neue", sans-serif', fontSize: '36px', lineHeight: 1.2 }}
           >
-            {new Set(schedules.map((s) => s.batch_id)).size}
+            {totalBatches}
           </div>
         </Card>
         <Card className="border-violet-100 bg-violet-50/50" bodyClassName="py-4 text-center">
@@ -110,7 +140,7 @@ export default function TaskStats() {
             className="mt-1 font-bold text-slate-900"
             style={{ fontFamily: 'Arial, "Helvetica Neue", sans-serif', fontSize: '36px', lineHeight: 1.2 }}
           >
-            {schedules.length}
+            {totalTasks}
           </div>
         </Card>
         <Card className="border-amber-100 bg-amber-50/50" bodyClassName="py-4 text-center">
@@ -119,9 +149,7 @@ export default function TaskStats() {
             className="mt-1 font-bold text-slate-900"
             style={{ fontFamily: 'Arial, "Helvetica Neue", sans-serif', fontSize: '36px', lineHeight: 1.2 }}
           >
-            {schedules.length > 0
-              ? ((schedules.filter((s) => s.status === 'completed').length / schedules.length) * 100).toFixed(0) + '%'
-              : '—'}
+            {totalTasks > 0 ? completionRate.toFixed(0) + '%' : '—'}
           </div>
         </Card>
       </div>
@@ -249,13 +277,16 @@ export default function TaskStats() {
                       </div>
                     </td>
 
-                    {/* 逾期任务 */}
+                    {/* 逾期任务（A3: 用当前日期实时计算） */}
                     <td className="text-center">
-                      {st.overdueTasks > 0 ? (
-                        <Badge tone="red">{st.overdueTasks} 项逾期</Badge>
-                      ) : (
-                        <span className="text-xs text-slate-400">无逾期</span>
-                      )}
+                      {(() => {
+                        const realOverdue = getRealOverdue(st.name);
+                        return realOverdue > 0 ? (
+                          <Badge tone="red">{realOverdue} 项逾期</Badge>
+                        ) : (
+                          <span className="text-xs text-slate-400">无逾期</span>
+                        );
+                      })()}
                     </td>
                   </tr>
                 );

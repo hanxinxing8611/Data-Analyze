@@ -48,9 +48,7 @@ export function parseCloudSchedule(raw: string): CloudScheduleItem[] | null {
       const o = it as Record<string, unknown>;
       return (
         typeof o.batch_id === 'string' &&
-        typeof o.material_type === 'string' &&
         typeof o.engineer_name === 'string' &&
-        typeof o.engineer_email === 'string' &&
         typeof o.start_date === 'string' &&
         typeof o.report_deadline === 'string' &&
         typeof o.status === 'string'
