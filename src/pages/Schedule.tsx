@@ -296,7 +296,8 @@ export default function Schedule() {
         setMsg('已同步云端');
         setTimeout(() => setMsg(''), 3000);
       } else if (result.message === 'not-configured') {
-        // 未配置 Token，静默（仅本地操作）
+        // 未配置 Token，提示用户
+        setError('未配置 GitHub Token，数据仅保存在本地。请在「系统设置」→「云共享设置」中配置 Token 后同步。');
         return;
       } else {
         setError(`云端同步失败：${result.message}`);
@@ -533,7 +534,15 @@ export default function Schedule() {
         actions={
           <Button variant="secondary" onClick={async () => {
             setMsg('正在同步…');
+            setError('');
             await syncToCloud();
+            // syncToCloud 内部会设置 msg/error；若未更新说明无 Token 或静默返回
+            setTimeout(() => {
+              setMsg((prev) => {
+                if (prev === '正在同步…') return '';
+                return prev;
+              });
+            }, 500);
           }}>
             同步云端
           </Button>
