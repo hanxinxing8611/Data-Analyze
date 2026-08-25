@@ -75,7 +75,7 @@ export function StatCard({
       <div className="mt-1.5 flex items-baseline gap-1">
         <span
           className="text-[36px] font-semibold leading-none tracking-tight text-slate-900"
-          style={{ fontFamily: "'Century Gothic', 'Apple Gothic', 'Questrial', sans-serif" }}
+          style={{ fontFamily: 'Arial, "Helvetica Neue", sans-serif' }}
         >
           {value}
         </span>

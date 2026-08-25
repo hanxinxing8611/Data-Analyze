@@ -84,29 +84,41 @@ export default function TaskStats() {
         </div>
       )}
 
-      {/* 总览卡片 */}
+      {/* 总览卡片（内容居中，数字 Arial 36px） */}
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card className="border-blue-100 bg-blue-50/50" bodyClassName="py-4">
+        <Card className="border-blue-100 bg-blue-50/50" bodyClassName="py-4 text-center">
           <div className="text-xs text-slate-500">工程师总数</div>
-          <div className="mt-1 text-3xl font-bold text-slate-900">
+          <div
+            className="mt-1 font-bold text-slate-900"
+            style={{ fontFamily: 'Arial, "Helvetica Neue", sans-serif', fontSize: '36px', lineHeight: 1.2 }}
+          >
             {stats.length}
           </div>
         </Card>
-        <Card className="border-emerald-100 bg-emerald-50/50" bodyClassName="py-4">
+        <Card className="border-emerald-100 bg-emerald-50/50" bodyClassName="py-4 text-center">
           <div className="text-xs text-slate-500">验证批次总数</div>
-          <div className="mt-1 text-3xl font-bold text-slate-900">
+          <div
+            className="mt-1 font-bold text-slate-900"
+            style={{ fontFamily: 'Arial, "Helvetica Neue", sans-serif', fontSize: '36px', lineHeight: 1.2 }}
+          >
             {new Set(schedules.map((s) => s.batch_id)).size}
           </div>
         </Card>
-        <Card className="border-violet-100 bg-violet-50/50" bodyClassName="py-4">
+        <Card className="border-violet-100 bg-violet-50/50" bodyClassName="py-4 text-center">
           <div className="text-xs text-slate-500">验证计划总数</div>
-          <div className="mt-1 text-3xl font-bold text-slate-900">
+          <div
+            className="mt-1 font-bold text-slate-900"
+            style={{ fontFamily: 'Arial, "Helvetica Neue", sans-serif', fontSize: '36px', lineHeight: 1.2 }}
+          >
             {schedules.length}
           </div>
         </Card>
-        <Card className="border-amber-100 bg-amber-50/50" bodyClassName="py-4">
+        <Card className="border-amber-100 bg-amber-50/50" bodyClassName="py-4 text-center">
           <div className="text-xs text-slate-500">总体完成率</div>
-          <div className="mt-1 text-3xl font-bold text-slate-900">
+          <div
+            className="mt-1 font-bold text-slate-900"
+            style={{ fontFamily: 'Arial, "Helvetica Neue", sans-serif', fontSize: '36px', lineHeight: 1.2 }}
+          >
             {schedules.length > 0
               ? ((schedules.filter((s) => s.status === 'completed').length / schedules.length) * 100).toFixed(0) + '%'
               : '—'}

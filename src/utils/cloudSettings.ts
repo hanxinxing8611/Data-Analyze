@@ -297,9 +297,10 @@ export interface SyncResult {
   message: string;
 }
 
-/** 获取云端文件当前 sha（新建文件无需 sha） */
+/** 获取云端文件当前 sha（新建文件无需 sha；禁用缓存，避免拿到过期 sha 导致 409） */
 async function fetchCloudSha(cfg: CloudConfig): Promise<string | null> {
-  const res = await fetch(`https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${CLOUD_FILE_PATH}`, {
+  const res = await fetch(`https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${CLOUD_FILE_PATH}?t=${Date.now()}`, {
+    cache: 'no-store',
     headers: {
       Accept: 'application/vnd.github+json',
       Authorization: `Bearer ${cfg.token}`,
@@ -311,7 +312,7 @@ async function fetchCloudSha(cfg: CloudConfig): Promise<string | null> {
   return typeof data.sha === 'string' ? data.sha : null;
 }
 
-/** 提交设置到 GitHub 仓库（PUT Contents API，409 冲突自动重试一次） */
+/** 提交设置到 GitHub 仓库（PUT Contents API，409/422 冲突自动重试最多 3 次） */
 async function pushSettings(cfg: CloudConfig, payload: CloudSettings): Promise<void> {
   const content = encodeBase64Utf8(JSON.stringify(payload, null, 2) + '\n');
   const doPut = async (sha: string | null) =>
@@ -329,17 +330,18 @@ async function pushSettings(cfg: CloudConfig, payload: CloudSettings): Promise<v
       }),
     });
 
-  let sha = await fetchCloudSha(cfg);
-  let res = await doPut(sha);
-  if (res.status === 409 || res.status === 422) {
-    // 他人刚推送过：重新取 sha 再试一次
-    sha = await fetchCloudSha(cfg);
-    res = await doPut(sha);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const sha = await fetchCloudSha(cfg);
+    const res = await doPut(sha);
+    if (res.ok) return;
+    if (res.status !== 409 && res.status !== 422) {
+      const detail = (await res.json().catch(() => ({}))) as { message?: string };
+      throw new Error(detail.message ? `HTTP ${res.status}：${detail.message}` : `HTTP ${res.status}`);
+    }
+    // sha 已过期（他人刚推送），稍候重新取 sha 再试
+    await new Promise((r) => setTimeout(r, 600));
   }
-  if (!res.ok) {
-    const detail = (await res.json().catch(() => ({}))) as { message?: string };
-    throw new Error(detail.message ? `HTTP ${res.status}：${detail.message}` : `HTTP ${res.status}`);
-  }
+  throw new Error('云端数据已被他人更新，同步冲突，请稍后重试');
 }
 
 /** 一键同步入口：读本机配置与当前设置，推送云端 */

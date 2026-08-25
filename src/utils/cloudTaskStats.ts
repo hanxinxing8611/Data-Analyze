@@ -5,7 +5,7 @@
  * - 拉取：页面打开时从 GitHub 仓库拉取 public/shared/taskStats.json → 展示聚合统计
  * - 推送：验证计划增删改后，自动计算并推送全量工程师统计到云端（需配置 Token）
  * - 无 Token：仅本地操作，不推送（其他工程师不受影响）
- * - 冲突处理：409 自动重试一次
+ * - 冲突处理：sha 请求禁用缓存，409 冲突自动重试（最多 3 次，间隔 600ms）
  *
  * 云端数据格式：CloudTaskStat[]（聚合后的工程师统计，不含原始 PCE 数组）
  */
@@ -249,10 +249,12 @@ export async function fetchCloudTaskStats(): Promise<CloudTaskStat[] | null> {
 
 /* ---------------- 推送 ---------------- */
 
+/** 获取云端文件当前 sha（禁用缓存，避免拿到过期 sha 导致 409） */
 async function fetchCloudTaskStatsSha(cfg: CloudConfig): Promise<string | null> {
   const res = await fetch(
-    `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${CLOUD_TASK_STATS_PATH}`,
+    `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${CLOUD_TASK_STATS_PATH}?t=${Date.now()}`,
     {
+      cache: 'no-store',
       headers: {
         Accept: 'application/vnd.github+json',
         Authorization: `Bearer ${cfg.token}`,
@@ -267,7 +269,7 @@ async function fetchCloudTaskStatsSha(cfg: CloudConfig): Promise<string | null> 
 
 /**
  * 推送任务统计数据到 GitHub 仓库
- * 409 冲突自动重试一次
+ * 409/422 冲突自动重试（最多 3 次，每次重新获取 sha）
  */
 export async function pushCloudTaskStats(items: CloudTaskStat[]): Promise<{ ok: boolean; message: string }> {
   const cfg = loadCloudConfig();
@@ -294,17 +296,18 @@ export async function pushCloudTaskStats(items: CloudTaskStat[]): Promise<{ ok: 
     );
 
   try {
-    let sha = await fetchCloudTaskStatsSha(cfg);
-    let res = await doPut(sha);
-    if (res.status === 409 || res.status === 422) {
-      sha = await fetchCloudTaskStatsSha(cfg);
-      res = await doPut(sha);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const sha = await fetchCloudTaskStatsSha(cfg);
+      const res = await doPut(sha);
+      if (res.ok) return { ok: true, message: '已同步云端' };
+      if (res.status !== 409 && res.status !== 422) {
+        const detail = (await res.json().catch(() => ({}))) as { message?: string };
+        return { ok: false, message: detail.message ? `HTTP ${res.status}：${detail.message}` : `HTTP ${res.status}` };
+      }
+      // sha 已过期（他人刚推送），稍候重新取 sha 再试
+      await new Promise((r) => setTimeout(r, 600));
     }
-    if (!res.ok) {
-      const detail = (await res.json().catch(() => ({}))) as { message?: string };
-      return { ok: false, message: detail.message ? `HTTP ${res.status}：${detail.message}` : `HTTP ${res.status}` };
-    }
-    return { ok: true, message: '已同步云端' };
+    return { ok: false, message: '云端数据已被他人更新，同步冲突，请稍后重试' };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : String(e) };
   }

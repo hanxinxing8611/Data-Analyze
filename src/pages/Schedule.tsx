@@ -83,6 +83,9 @@ function todayStr(): string {
 /** 一组验证计划的批次数量 */
 const BATCH_GROUP_SIZE = 4;
 
+/** 报告截止日期默认 = 开始日期 + N 个工作日 */
+const DEADLINE_WORKING_DAYS = 3;
+
 interface ScheduleForm {
   /** 批次号（一组 4 个，允许留空跳过） */
   batches: string[];
@@ -102,8 +105,8 @@ function emptyForm(): ScheduleForm {
     baselineIndex: null,
     engineer_name: '',
     start_date: today,
-    // 截止日期默认 = 开始日期 + 2 个工作日（可手动修改）
-    report_deadline: addWorkingDays(today, 2),
+    // 截止日期默认 = 开始日期 + 3 个工作日（可手动修改）
+    report_deadline: addWorkingDays(today, DEADLINE_WORKING_DAYS),
     status: 'planned',
     notes: '',
   };
@@ -290,12 +293,12 @@ export default function Schedule() {
     }
   };
 
-  /* 开始日期变化：截止日期未手动修改过时自动跟随（开始+2 个工作日） */
+  /* 开始日期变化：截止日期未手动修改过时自动跟随（开始+3 个工作日） */
   const handleStartDate = (date: string) => {
     setForm((prev) => ({
       ...prev,
       start_date: date,
-      report_deadline: deadlineManual ? prev.report_deadline : addWorkingDays(date, 2),
+      report_deadline: deadlineManual ? prev.report_deadline : addWorkingDays(date, DEADLINE_WORKING_DAYS),
     }));
   };
 
@@ -421,7 +424,7 @@ export default function Schedule() {
       notes: item.notes || '',
     });
     /* 已保存的截止日期与默认值不一致 → 视为手动指定，改开始日期时不覆盖 */
-    setDeadlineManual(item.report_deadline !== addWorkingDays(item.start_date, 2));
+    setDeadlineManual(item.report_deadline !== addWorkingDays(item.start_date, DEADLINE_WORKING_DAYS));
     setError('');
     setMsg('');
   };
@@ -556,7 +559,7 @@ export default function Schedule() {
                   return (
                     <tr key={it.id} className={overdue ? 'bg-red-50' : ''}>
                       <td>
-                        <span className="flex items-center gap-1.5">
+                        <span className="flex items-center justify-center gap-1.5">
                           <span className="font-mono font-medium">{it.batch_id}</span>
                           {!!it.is_baseline && (
                             <Badge tone="blue">基准</Badge>
@@ -590,7 +593,7 @@ export default function Schedule() {
                         </Badge>
                       </td>
                       <td>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center justify-center gap-1.5">
                           {canWrite && (
                             <>
                               <button
@@ -734,7 +737,7 @@ export default function Schedule() {
               />
               <div className="mt-1 flex items-center justify-between">
                 <span className="text-[11px] text-slate-400">
-                  默认为开始日期 + 2 个工作日，可手动修改
+                  默认为开始日期 + 3 个工作日，可手动修改
                 </span>
                 {deadlineManual && form.start_date && (
                   <button
@@ -744,7 +747,7 @@ export default function Schedule() {
                       setDeadlineManual(false);
                       setForm((prev) => ({
                         ...prev,
-                        report_deadline: addWorkingDays(prev.start_date, 2),
+                        report_deadline: addWorkingDays(prev.start_date, DEADLINE_WORKING_DAYS),
                       }));
                     }}
                   >
