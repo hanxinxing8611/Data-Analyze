@@ -1,0 +1,42 @@
+{
+  "updatedAt": "2026-08-26T03:56:29.528Z",
+  "criteria": {
+    "championRule": {
+      "enabled": true,
+      "threshold": 0
+    },
+    "medianRule": {
+      "enabled": true,
+      "threshold": 0
+    },
+    "vocffRule": {
+      "enabled": false,
+      "threshold": 0
+    },
+    "pceMin": 18,
+    "ffMin": 0.5,
+    "resistanceMin": 0
+  },
+  "mailRecipients": [
+    "xinxing.han@jingling-tech.com",
+    "jason@jingling-tech.com"
+  ],
+  "adminNames": [
+    "xinxing.han@jingling-tech.com",
+    "jason@jingling-tech.com"
+  ],
+  "engineers": [
+    {
+      "name": "汪海俊",
+      "email": ""
+    },
+    {
+      "name": "党文秀",
+      "email": ""
+    },
+    {
+      "name": "柴化云",
+      "email": "huayun.chai@jingling-tech.com"
+    }
+  ]
+}
