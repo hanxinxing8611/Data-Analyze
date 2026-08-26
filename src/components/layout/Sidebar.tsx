@@ -155,7 +155,7 @@ export default function Sidebar() {
 
       {/* 数据库状态 */}
       <div className="relative border-t border-white/[0.07] px-5 py-4">
-        <div className="flex flex-col items-center gap-1.5">
+        <div className="flex flex-col items-start gap-1.5">
           <div className="flex items-center gap-2.5">
             <span className="relative flex h-2 w-2">
               {dbReady && (
@@ -167,11 +167,11 @@ export default function Sidebar() {
                 }`}
               />
             </span>
-            <span className="text-xs font-medium text-slate-400">
+            <span className="text-sm font-medium text-slate-400">
               {dbReady ? '数据库就绪' : '数据库初始化中…'}
             </span>
           </div>
-          <div className="text-[10.5px] tracking-wide text-slate-600">
+          <div className="text-[12.5px] tracking-wide text-slate-600">
             本地存储 · IndexedDB
           </div>
         </div>
