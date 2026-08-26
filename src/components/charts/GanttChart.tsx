@@ -205,10 +205,10 @@ export default function GanttChart({ items, width = 760 }: Props) {
         </div>
         <div className="flex items-center gap-3 text-[11px] text-slate-500">
           {([
-            { label: '计划中', c: 'bg-gradient-to-r from-slate-400 to-slate-500' },
-            { label: '进行中', c: 'bg-gradient-to-r from-blue-400 to-blue-600' },
-            { label: '已完成', c: 'bg-gradient-to-r from-emerald-400 to-emerald-500' },
-            { label: '逾期', c: 'bg-gradient-to-r from-red-400 to-red-500' },
+            { label: '计划中', c: 'bg-slate-500' },
+            { label: '进行中', c: 'bg-blue-600' },
+            { label: '已完成', c: 'bg-emerald-500' },
+            { label: '逾期', c: 'bg-red-600' },
           ]).map((l) => (
             <span key={l.label} className="flex items-center gap-1.5">
               <span className={`h-2.5 w-3.5 rounded-full ${l.c}`} />
@@ -226,26 +226,9 @@ export default function GanttChart({ items, width = 760 }: Props) {
           className="block"
           style={{ minWidth: width, fontFamily: "Arial, 'Microsoft YaHei', sans-serif" }}
         >
-          <defs>
-            {(['planned', 'in_progress', 'completed', 'overdue'] as const).map((key) => {
-              const c = key === 'overdue'
-                ? { from: '#f87171', to: '#dc2626' }
-                : key === 'in_progress'
-                  ? { from: '#60a5fa', to: '#2563eb' }
-                  : key === 'completed'
-                    ? { from: '#6ee7b7', to: '#10b981' }
-                    : { from: '#94a3b8', to: '#64748b' };
-              return (
-                <linearGradient key={key} id={`gantt-bar-${key}`} x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0%" stopColor={c.from} />
-                  <stop offset="100%" stopColor={c.to} />
-                </linearGradient>
-              );
-            })}
-            <filter id="gantt-shadow" x="-2" y="-2" width="104%" height="108%">
-              <feDropShadow dx="0" dy="1" stdDeviation="1" floodColor="#0f172a" floodOpacity="0.1" />
-            </filter>
-          </defs>
+          {/* 条形填充使用纯色而非 url(#id) 渐变/滤镜引用：
+              本应用为 hash 路由（URL 含 #），部分浏览器下 url(#片段) 解析会失效，
+              且 filter 引用失效时整个元素不渲染（SVG 规范），故全部改用纯色 */}
 
           {/* 周末底纹（日视图） */}
           {viewMode === 'day' && periods.map((p, i) => (
@@ -330,16 +313,22 @@ export default function GanttChart({ items, width = 760 }: Props) {
                   {tasks.length} 个任务{laneCount > 1 ? ` · ${laneCount}行` : ''}
                 </text>
 
-                {/* 任务条 */}
+                {/* 任务条（纯色填充，不用 url(#id) 渐变/滤镜引用） */}
                 {tasks.map(({ task, lane }) => {
                   const x = dateX(task.start_date);
                   const xEnd = dateX(task.report_deadline);
                   const w = Math.max(xEnd - x + periodW, 8);
                   const y = rowY + rowPadV + lane * laneH + (laneH - barH) / 2;
                   const isOverdue = task.status !== 'completed' && task.report_deadline < today;
-                  const colorKey = isOverdue ? 'overdue' : task.status;
+                  const barColor = isOverdue
+                    ? '#dc2626'
+                    : task.status === 'in_progress'
+                      ? '#2563eb'
+                      : task.status === 'completed'
+                        ? '#10b981'
+                        : '#64748b';
 
-                  // 起止同日时用菱形节点表示单日任务
+                  // 条形足够宽时批次号放条内
                   const labelFits = w >= 52;
 
                   return (
@@ -350,8 +339,7 @@ export default function GanttChart({ items, width = 760 }: Props) {
                         width={Math.max(w - 2, 6)}
                         height={barH}
                         rx={11}
-                        fill={`url(#gantt-bar-${colorKey})`}
-                        filter="url(#gantt-shadow)"
+                        fill={barColor}
                       />
                       {/* 批次号 */}
                       {labelFits ? (
