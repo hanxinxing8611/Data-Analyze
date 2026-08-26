@@ -348,11 +348,11 @@ export default function Schedule() {
       seen.add(b);
     }
 
-    /* 基准批次必须落在已填写的批次上 */
-    const baselineBatch = form.baselineIndex !== null ? form.batches[form.baselineIndex]?.trim() : '';
-    if (form.baselineIndex !== null && (!baselineBatch || !batches.includes(baselineBatch))) {
-      showToast('基准批次对应的批次号不能为空', 'warning'); return;
-    }
+    /* 基准批次：新增模式下第 1 格固定为基准（留空则本组无基准）；编辑模式跟随开关 */
+    const baselineIdx = editId !== null
+      ? form.baselineIndex
+      : form.batches[0].trim() ? 0 : null;
+    const baselineBatch = baselineIdx !== null ? form.batches[baselineIdx]?.trim() : '';
 
     /* 邮箱不再录入，自动沿用已保存负责人的邮箱（无则留空，保持数据兼容） */
     const email = engineers.find((en) => en.name === name)?.email ?? '';
@@ -367,8 +367,8 @@ export default function Schedule() {
           report_deadline: form.report_deadline,
           status: form.status,
           notes: form.notes || null,
-          // C2: 编辑模式下基准标记直接取 form.baselineIndex 是否选中
-          is_baseline: form.baselineIndex !== null ? 1 : 0,
+          // C2: 编辑模式下基准标记直接取开关状态
+          is_baseline: baselineIdx !== null ? 1 : 0,
         });
         showToast('验证计划条目已更新');
       } else {
@@ -387,7 +387,7 @@ export default function Schedule() {
             report_deadline: form.report_deadline,
             status: form.status,
             notes: form.notes || null,
-            is_baseline: i === form.baselineIndex ? 1 : 0,
+            is_baseline: i === baselineIdx ? 1 : 0,
             group_id: groupId,
           });
         }
@@ -678,54 +678,89 @@ export default function Schedule() {
       {canWrite ? (
         <Card title={editId !== null ? '编辑验证计划' : '新增验证计划'} className="mt-4">
           <form onSubmit={handleSubmit} className="space-y-3">
-            {/* 批次号组（新增：4 个一组紧凑排列 + 基准单选；编辑：单批次） */}
+            {/* 批次号：新增模式固定 1 基准 + 3 验证；编辑模式单批次 + 基准开关 */}
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-600">
-                {editId !== null
-                  ? '批次号'
-                  : `批次号（${BATCH_GROUP_SIZE} 个一组，至少填写 1 个）`}
-              </label>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {(editId !== null ? [form.batches[0]] : form.batches).map((b, idx) => {
-                  const i = editId !== null ? 0 : idx;
-                  return (
-                    <div key={i} className="flex items-center gap-1">
+              {editId !== null ? (
+                <>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-600">批次号</label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={form.batches[0]}
+                      onChange={(e) => {
+                        const batches = [...form.batches];
+                        batches[0] = e.target.value;
+                        setForm({ ...form, batches });
+                      }}
+                      className="w-[180px] rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setForm((prev) => ({
+                          ...prev,
+                          baselineIndex: prev.baselineIndex === 0 ? null : 0,
+                        }))
+                      }
+                      className={`rounded-full border px-3 py-1 text-[11px] font-medium transition ${
+                        form.baselineIndex === 0
+                          ? 'border-amber-300 bg-amber-50 text-amber-700'
+                          : 'border-slate-200 text-slate-400 hover:border-amber-300 hover:text-amber-600'
+                      }`}
+                    >
+                      {form.baselineIndex === 0 ? '✓ 基准批次' : '标记为基准'}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-600">
+                    批次号（第 1 格为基准批次，后 3 格为验证批次）
+                  </label>
+                  <div className="grid grid-cols-4 gap-2">
+                    <div>
+                      <span className="mb-1 flex items-center gap-1 text-[11px] font-medium text-amber-700">
+                        <svg width="9" height="11" viewBox="0 0 10 13" aria-hidden="true">
+                          <line x1="0.8" y1="0" x2="0.8" y2="13" stroke="#d97706" strokeWidth="1.6" strokeLinecap="round" />
+                          <path d="M0.8 0 L10 3.5 L0.8 7 Z" fill="#f59e0b" />
+                        </svg>
+                        基准批次
+                      </span>
                       <input
                         type="text"
-                        value={b}
+                        value={form.batches[0]}
                         onChange={(e) => {
                           const batches = [...form.batches];
-                          batches[i] = e.target.value;
+                          batches[0] = e.target.value;
                           setForm({ ...form, batches });
                         }}
-                        placeholder={`批次${i + 1}`}
-                        className="w-[120px] rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                        placeholder="基准批次（可选）"
+                        className="w-full rounded-md border border-amber-200 bg-amber-50/40 px-2 py-1.5 text-xs"
                       />
-                      <label
-                        className="flex shrink-0 cursor-pointer select-none items-center gap-0.5 rounded px-1.5 py-1 text-[11px] text-slate-400 transition hover:bg-blue-50 hover:text-blue-600"
-                        title="设为基准批次"
-                      >
-                        <input
-                          type="radio"
-                          name="baseline-batch"
-                          className="accent-blue-600"
-                          checked={form.baselineIndex === i}
-                          onClick={() =>
-                            setForm((prev) => ({
-                              ...prev,
-                              baselineIndex: prev.baselineIndex === i ? null : i,
-                            }))
-                          }
-                          readOnly
-                        />
-                        基准
-                      </label>
                     </div>
-                  );
-                })}
-              </div>
+                    {[1, 2, 3].map((i) => (
+                      <div key={i}>
+                        <span className="mb-1 block text-[11px] font-medium text-slate-500">
+                          验证批次 {i}
+                        </span>
+                        <input
+                          type="text"
+                          value={form.batches[i]}
+                          onChange={(e) => {
+                            const batches = [...form.batches];
+                            batches[i] = e.target.value;
+                            setForm({ ...form, batches });
+                          }}
+                          placeholder={`批次${i}`}
+                          className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
               <p className="mt-1 text-[11px] text-slate-400">
-                同组批次共享负责人与日期；勾选「基准」标记基准批次
+                同组批次共享负责人与日期；第 1 格固定为基准批次，留空则本组不设基准
               </p>
             </div>
 
