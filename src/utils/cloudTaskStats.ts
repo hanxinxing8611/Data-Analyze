@@ -119,26 +119,34 @@ export function computeTaskStats(
     if (days > 0) st.cycleDays.push(days);
   }
 
-  // 建立批次→工程师映射
-  const batchEngineers = new Map<string, Set<string>>();
+  // 建立批次→工程师映射（仅该工程师独占的非基准批次才计入 PCE 统计）
+  // - 基准批次（is_baseline=1）是公共参照物，不计入任何工程师个人效率
+  // - 多人共享批次（同一 batch_id 挂多人）无法界定归属，不计入
+  const batchOwners = new Map<string, { engineers: Set<string>; isBaseline: boolean }>();
   for (const s of schedules) {
-    if (!batchEngineers.has(s.batch_id)) {
-      batchEngineers.set(s.batch_id, new Set());
+    if (!batchOwners.has(s.batch_id)) {
+      batchOwners.set(s.batch_id, { engineers: new Set(), isBaseline: false });
     }
-    batchEngineers.get(s.batch_id)!.add(s.engineer_name);
+    const entry = batchOwners.get(s.batch_id)!;
+    entry.engineers.add(s.engineer_name);
+    if (s.is_baseline) entry.isBaseline = true;
+  }
+  // 归属明确的批次：非基准 且 仅一名工程师负责
+  const soleOwnerBatches = new Map<string, string>();
+  for (const [batchId, entry] of batchOwners) {
+    if (!entry.isBaseline && entry.engineers.size === 1) {
+      soleOwnerBatches.set(batchId, [...entry.engineers][0]);
+    }
   }
 
-  // PCE 效率统计（仅有效器件）
+  // PCE 效率统计（仅有效器件，且批次归属明确）
   const validSamples = samples.filter((r) => isValidDevice(r, thresholds));
   for (const r of validSamples) {
     if (r.efficiency == null) continue;
-    const engineers = batchEngineers.get(r.batch_id);
-    if (!engineers) continue;
-    for (const eng of engineers) {
-      if (map.has(eng)) {
-        map.get(eng)!.pceValues.push(r.efficiency);
-      }
-    }
+    const owner = soleOwnerBatches.get(r.batch_id);
+    if (!owner) continue;
+    const st = map.get(owner);
+    if (st) st.pceValues.push(r.efficiency);
   }
 
   // 聚合输出
