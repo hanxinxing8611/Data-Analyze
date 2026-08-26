@@ -474,7 +474,7 @@ export default function TaskStats() {
           const barW = barCount > 0 ? Math.max(4, (groupW * 0.7 - barGap * (barCount - 1)) / barCount) : 8;
           if (!Number.isFinite(CHART_W) || !Number.isFinite(CHART_H)) return null;
           return (
-            <Card title="验证批次数对比" className="mt-4" bodyClassName="pb-2">
+            <Card title="验证批次数对比" className="mt-4" bodyClassName="px-5 pt-4 pb-3">
               <div className="mb-3 flex items-center gap-1">
                 <button
                   type="button"
@@ -558,7 +558,7 @@ export default function TaskStats() {
       })()}
 
       {/* 效率对比（基于 mergedStats，PCE 来自 taskStats.json 快照） */}
-      <Card title="效率对比" className="mt-4" bodyClassName="pb-2">
+      <Card title="效率对比" className="mt-4" bodyClassName="px-5 pt-4 pb-3">
         {mergedStats.filter((st) => st.avgPce != null).length > 0 ? (
           <div className="space-y-3">
             {mergedStats

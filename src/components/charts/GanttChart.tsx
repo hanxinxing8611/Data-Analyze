@@ -3,15 +3,6 @@ import type { ScheduleItem } from '../../types';
 
 type ViewMode = 'day' | 'week' | 'month';
 
-/** 甘特图颜色映射 */
-const STATUS_COLORS: Record<ScheduleItem['status'], { bar: string; barEnd: string; text: string }> = {
-  planned: { bar: '#cbd5e1', barEnd: '#94a3b8', text: '#475569' },
-  in_progress: { bar: '#3b82f6', barEnd: '#2563eb', text: '#fff' },
-  completed: { bar: '#94a3b8', barEnd: '#64748b', text: '#fff' },
-};
-
-const OVERDUE_COLOR = { bar: '#ef4444', barEnd: '#dc2626', text: '#fff' };
-
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -20,13 +11,14 @@ function dayDiff(a: string, b: string): number {
   return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000);
 }
 
-function statusLabel(s: ScheduleItem['status']): string {
-  return s === 'in_progress' ? '进行中' : s === 'completed' ? '已完成' : '计划中';
+interface Period { key: string; label: string; startDate: string; endDate: string; weekend: boolean }
+
+function fmtDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-interface Period { key: string; label: string; startDate: string; endDate: string; }
+/* ---------------- 时段生成 ---------------- */
 
-/** 按 viewMode 生成时段列表 */
 function genPeriods(items: ScheduleItem[], mode: ViewMode, today: string): Period[] {
   if (items.length === 0) {
     const d = new Date();
@@ -51,7 +43,13 @@ function genDayPeriods(start: Date, end: Date): Period[] {
   for (let i = 0; i < days; i++) {
     const d = new Date(start); d.setDate(d.getDate() + i);
     const ds = fmtDate(d);
-    periods.push({ key: ds, label: `${d.getMonth() + 1}/${d.getDate()}`, startDate: ds, endDate: ds });
+    periods.push({
+      key: ds,
+      label: `${d.getMonth() + 1}/${d.getDate()}`,
+      startDate: ds,
+      endDate: ds,
+      weekend: d.getDay() === 0 || d.getDay() === 6,
+    });
   }
   return periods;
 }
@@ -63,15 +61,14 @@ function genWeekPeriods(start: Date, end: Date): Period[] {
     const day = cur.getDay();
     const monday = new Date(cur); monday.setDate(cur.getDate() - (day === 0 ? 6 : day - 1));
     const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
-    const startOfYear = new Date(monday.getFullYear(), 0, 1);
-    const weekNum = Math.ceil(((monday.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7);
-    const key = `${monday.getFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+    const key = fmtDate(monday);
     if (!periods.some(p => p.key === key)) {
       periods.push({
         key,
         label: `${monday.getMonth() + 1}/${monday.getDate()}`,
         startDate: fmtDate(monday),
         endDate: fmtDate(sunday),
+        weekend: false,
       });
     }
     cur.setDate(cur.getDate() + 7);
@@ -83,18 +80,20 @@ function genMonthPeriods(start: Date, end: Date): Period[] {
   const periods: Period[] = [];
   const cur = new Date(start.getFullYear(), start.getMonth(), 1);
   while (cur <= end) {
-    const key = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}`;
     const lastDay = new Date(cur.getFullYear(), cur.getMonth() + 1, 0);
     periods.push({
-      key,
+      key: `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}`,
       label: `${cur.getFullYear()}/${cur.getMonth() + 1}`,
       startDate: fmtDate(cur),
       endDate: fmtDate(lastDay),
+      weekend: false,
     });
     cur.setMonth(cur.getMonth() + 1);
   }
   return periods;
 }
+
+/* ---------------- 组件 ---------------- */
 
 interface Props {
   items: ScheduleItem[];
@@ -113,156 +112,273 @@ export default function GanttChart({ items, width = 760 }: Props) {
     return Array.from(set).sort();
   }, [items]);
 
-  const engineerItems = useMemo(() => {
-    const m = new Map<string, ScheduleItem[]>();
-    for (const it of items) {
-      const arr = m.get(it.engineer_name) || [];
-      arr.push(it);
-      m.set(it.engineer_name, arr);
+  /** 任务分泳道：同工程师时间重叠的任务自动错行，避免完全遮挡 */
+  const layout = useMemo(() => {
+    const m = new Map<string, { task: ScheduleItem; lane: number }[]>();
+    for (const eng of engineers) {
+      const tasks = items
+        .filter((it) => it.engineer_name === eng)
+        .sort((a, b) => a.start_date.localeCompare(b.start_date));
+      const laneEnds: string[] = [];
+      const assigned: { task: ScheduleItem; lane: number }[] = [];
+      for (const t of tasks) {
+        let lane = laneEnds.findIndex((end) => end < t.start_date);
+        if (lane === -1) {
+          laneEnds.push(t.report_deadline);
+          lane = laneEnds.length - 1;
+        } else {
+          laneEnds[lane] = t.report_deadline;
+        }
+        assigned.push({ task: t, lane });
+      }
+      m.set(eng, assigned);
     }
     return m;
-  }, [items]);
+  }, [items, engineers]);
 
   if (items.length === 0) {
     return (
-      <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/50 text-sm text-slate-400">
-        暂无验证计划，请添加新条目
+      <div className="p-5">
+        <div className="flex h-36 items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/50 text-sm text-slate-400">
+          暂无验证计划，请添加新条目
+        </div>
       </div>
     );
   }
 
-  const padLeft = 108;
-  const padTop = viewMode === 'day' ? 38 : 36;
-  const rowH = 56;
-  const barH = 26;
-  const barYOff = (rowH - barH) / 2;
+  /* ---- 几何参数 ---- */
+  const padLeft = 92;
+  const headH = 34;
+  const laneH = 30;
+  const barH = 22;
+  const rowPadV = 8;
   const chartW = width - padLeft;
   const periodW = chartW / periods.length;
-  const totalH = padTop + engineers.length * rowH + 16;
+
+  const engRows = engineers.map((eng) => {
+    const lanes = layout.get(eng) || [];
+    const laneCount = Math.max(1, ...lanes.map((l) => l.lane + 1));
+    return { eng, laneCount, rowH: laneCount * laneH + rowPadV * 2 };
+  });
+  const totalH = headH + engRows.reduce((sum, r) => sum + r.rowH, 0) + 8;
+
+  /** 时间 → 时段索引（-1 表示超出范围，取边界） */
+  const dateToIdx = (d: string): number => {
+    if (viewMode === 'day') {
+      const idx = dayDiff(periods[0].startDate, d);
+      return Math.max(0, Math.min(periods.length - 1, idx));
+    }
+    let idx = periods.findIndex((p) => p.startDate <= d && p.endDate >= d);
+    if (idx === -1) idx = d < periods[0].startDate ? 0 : periods.length - 1;
+    return idx;
+  };
+
+  /** 日期在时段内的水平偏移比例（日视图精确到天，周/月视图靠左） */
+  const dateX = (d: string): number => {
+    const idx = dateToIdx(d);
+    if (viewMode === 'day') return padLeft + idx * periodW;
+    const p = periods[idx];
+    const total = dayDiff(p.startDate, p.endDate) || 1;
+    const offset = Math.max(0, Math.min(total, dayDiff(p.startDate, d)));
+    return padLeft + (idx + offset / total) * periodW;
+  };
 
   return (
     <div>
-      {/* 视图切换按钮 */}
-      <div className="mb-3 flex items-center gap-1">
-        {(['day', 'week', 'month'] as ViewMode[]).map((mode) => (
-          <button
-            key={mode}
-            onClick={() => setViewMode(mode)}
-            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-              viewMode === mode
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-            }`}
-          >
-            {mode === 'day' ? '日' : mode === 'week' ? '周' : '月'}
-          </button>
-        ))}
+      {/* 顶部：视图切换 + 图例 */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 pb-2.5">
+        <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-0.5">
+          {(['day', 'week', 'month'] as ViewMode[]).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setViewMode(mode)}
+              className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
+                viewMode === mode
+                  ? 'bg-white text-blue-600 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {mode === 'day' ? '日' : mode === 'week' ? '周' : '月'}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-3 text-[11px] text-slate-500">
+          {([
+            { label: '计划中', c: 'bg-gradient-to-r from-slate-400 to-slate-500' },
+            { label: '进行中', c: 'bg-gradient-to-r from-blue-400 to-blue-600' },
+            { label: '已完成', c: 'bg-gradient-to-r from-emerald-400 to-emerald-500' },
+            { label: '逾期', c: 'bg-gradient-to-r from-red-400 to-red-500' },
+          ]).map((l) => (
+            <span key={l.label} className="flex items-center gap-1.5">
+              <span className={`h-2.5 w-3.5 rounded-full ${l.c}`} />
+              {l.label}
+            </span>
+          ))}
+        </div>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-slate-200">
+      {/* 甘特图主体（横向滚动区） */}
+      <div className="overflow-x-auto">
         <svg
           viewBox={`0 0 ${width} ${totalH}`}
-          width={width}
-          height={totalH}
+          width="100%"
           className="block"
           style={{ minWidth: width, fontFamily: "Arial, 'Microsoft YaHei', sans-serif" }}
         >
           <defs>
-            <linearGradient id="gantt-bg" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#f8fafc" />
-              <stop offset="100%" stopColor="#f1f5f9" />
-            </linearGradient>
-            {['planned', 'in_progress', 'completed', 'overdue'].map((key) => (
-              <linearGradient key={key} id={`gantt-bar-${key}`} x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stopColor={
-                  key === 'overdue' ? '#ef4444' : key === 'in_progress' ? '#3b82f6' : key === 'completed' ? '#94a3b8' : '#cbd5e1'
-                } />
-                <stop offset="100%" stopColor={
-                  key === 'overdue' ? '#dc2626' : key === 'in_progress' ? '#1d4ed8' : key === 'completed' ? '#64748b' : '#94a3b8'
-                } />
-              </linearGradient>
-            ))}
-            <filter id="gantt-shadow" x="-4" y="-2" width="calc(100%+8)" height="calc(100%+6)">
-              <feDropShadow dx="0" dy="1" stdDeviation="1.5" floodColor="#0f172a" floodOpacity="0.08" />
+            {(['planned', 'in_progress', 'completed', 'overdue'] as const).map((key) => {
+              const c = key === 'overdue'
+                ? { from: '#f87171', to: '#dc2626' }
+                : key === 'in_progress'
+                  ? { from: '#60a5fa', to: '#2563eb' }
+                  : key === 'completed'
+                    ? { from: '#6ee7b7', to: '#10b981' }
+                    : { from: '#94a3b8', to: '#64748b' };
+              return (
+                <linearGradient key={key} id={`gantt-bar-${key}`} x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor={c.from} />
+                  <stop offset="100%" stopColor={c.to} />
+                </linearGradient>
+              );
+            })}
+            <filter id="gantt-shadow" x="-2" y="-2" width="104%" height="108%">
+              <feDropShadow dx="0" dy="1" stdDeviation="1" floodColor="#0f172a" floodOpacity="0.1" />
             </filter>
           </defs>
 
-          {/* 顶部标题栏背景 */}
-          <rect x={0} y={0} width={width} height={padTop} fill="url(#gantt-bg)" rx={0} />
-          <line x1={0} y1={padTop} x2={width} y2={padTop} stroke="#e2e8f0" strokeWidth={1} />
+          {/* 周末底纹（日视图） */}
+          {viewMode === 'day' && periods.map((p, i) => (
+            p.weekend && (
+              <rect key={`wk-${p.key}`} x={padLeft + i * periodW} y={0} width={periodW} height={totalH} fill="#f1f5f9" />
+            )
+          ))}
 
-          {/* 时段刻度 */}
+          {/* 表头背景 */}
+          <rect x={0} y={0} width={width} height={headH} fill="#f8fafc" />
+          <line x1={0} y1={headH} x2={width} y2={headH} stroke="#e2e8f0" strokeWidth={1} />
+
+          {/* 纵向网格线 */}
+          {periods.map((p, i) => (
+            <line
+              key={`grid-${p.key}`}
+              x1={padLeft + i * periodW}
+              y1={headH}
+              x2={padLeft + i * periodW}
+              y2={totalH}
+              stroke="#f1f5f9"
+              strokeWidth={1}
+            />
+          ))}
+          <line x1={padLeft} y1={headH} x2={padLeft} y2={totalH} stroke="#e2e8f0" strokeWidth={1} />
+
+          {/* 时段刻度文字 */}
           {periods.map((p, i) => {
-            const x = padLeft + i * periodW + periodW / 2;
-            const containsToday = today >= p.startDate && today <= p.endDate;
+            const cx = padLeft + i * periodW + periodW / 2;
+            const isToday = today >= p.startDate && today <= p.endDate;
             return (
-              <g key={p.key}>
-                {containsToday && (
-                  <>
-                    <line x1={x} y1={padTop} x2={x} y2={totalH} stroke="#ef4444" strokeWidth={2} opacity={0.3} />
-                    <circle cx={x} cy={padTop - 6} r={3} fill="#ef4444" />
-                  </>
-                )}
-                <text
-                  x={x}
-                  y={containsToday ? 14 : 20}
-                  textAnchor="middle"
-                  fontSize={containsToday ? 11 : 10}
-                  fontWeight={containsToday ? 700 : 400}
-                  fill={containsToday ? '#ef4444' : '#94a3b8'}
-                >
-                  {p.label}
-                </text>
-                {containsToday && viewMode === 'day' && (
-                  <text x={x} y={padTop - 12} textAnchor="middle" fontSize={10} fontWeight={700} fill="#ef4444">今天</text>
-                )}
-              </g>
+              <text
+                key={`tick-${p.key}`}
+                x={cx}
+                y={headH / 2 + 4}
+                textAnchor="middle"
+                fontSize={viewMode === 'day' ? 10 : 11}
+                fontWeight={isToday ? 700 : 400}
+                fill={isToday ? '#dc2626' : p.weekend ? '#cbd5e1' : '#94a3b8'}
+              >
+                {p.label}
+              </text>
             );
           })}
 
-          {engineers.map((eng, ei) => {
-            const rowY = padTop + ei * rowH;
-            const engTasks = engineerItems.get(eng) || [];
+          {/* 今天标记线 */}
+          {(() => {
+            const idx = periods.findIndex((p) => today >= p.startDate && today <= p.endDate);
+            if (idx === -1) return null;
+            const x = padLeft + (idx + 0.5) * periodW;
+            return (
+              <g>
+                <line x1={x} y1={headH} x2={x} y2={totalH} stroke="#ef4444" strokeWidth={1.5} strokeDasharray="3 3" opacity={0.55} />
+                <rect x={x - 15} y={headH + 4} width={30} height={16} rx={8} fill="#ef4444" />
+                <text x={x} y={headH + 15.5} textAnchor="middle" fontSize={9} fontWeight={700} fill="#fff">今天</text>
+              </g>
+            );
+          })()}
+
+          {/* 工程师行 */}
+          {engRows.map(({ eng, laneCount, rowH }, rowIndex) => {
+            const rowY = headH + engRows.slice(0, rowIndex).reduce((s, r) => s + r.rowH, 0);
+            const tasks = layout.get(eng) || [];
+
             return (
               <g key={eng}>
-                <rect x={0} y={rowY} width={width} height={rowH} fill={ei % 2 === 0 ? '#fafbfc' : '#fff'} />
-                <line x1={padLeft} y1={rowY + rowH} x2={width} y2={rowY + rowH} stroke="#f1f5f9" strokeWidth={1} />
-                <rect x={4} y={rowY + 4} width={padLeft - 12} height={rowH - 8} rx={6} fill="#f1f5f9" />
-                <text x={padLeft - 12} y={rowY + rowH / 2 + 4} textAnchor="end" fontSize={12} fontWeight={600} fill="#334155">{eng}</text>
+                {/* 行底色（隔行） */}
+                <rect
+                  x={0}
+                  y={rowY}
+                  width={width}
+                  height={rowH}
+                  fill={rowIndex % 2 === 0 ? '#ffffff' : '#fafbfc'}
+                />
+                <line x1={0} y1={rowY + rowH} x2={width} y2={rowY + rowH} stroke="#f1f5f9" strokeWidth={1} />
 
-                {engTasks.map((task) => {
-                  let startIdx = -1, endIdx = -1;
-                  if (viewMode === 'day') {
-                    startIdx = dayDiff(periods[0].startDate, task.start_date);
-                    endIdx = dayDiff(periods[0].startDate, task.report_deadline);
-                  } else {
-                    startIdx = periods.findIndex(p => p.startDate <= task.start_date && p.endDate >= task.start_date);
-                    endIdx = periods.findIndex(p => p.startDate <= task.report_deadline && p.endDate >= task.report_deadline);
-                    if (startIdx === -1) startIdx = periods.findIndex(p => p.startDate > task.start_date);
-                    if (endIdx === -1) endIdx = periods.length - 1;
-                  }
-                  if (startIdx === -1 || endIdx === -1) return null;
+                {/* 工程师名（含任务数） */}
+                <text x={padLeft - 10} y={rowY + rowH / 2 - 2} textAnchor="end" fontSize={12} fontWeight={600} fill="#334155">
+                  {eng}
+                </text>
+                <text x={padLeft - 10} y={rowY + rowH / 2 + 12} textAnchor="end" fontSize={9} fill="#94a3b8">
+                  {tasks.length} 个任务{laneCount > 1 ? ` · ${laneCount}行` : ''}
+                </text>
 
-                  const x = padLeft + startIdx * periodW;
-                  const w = Math.max((endIdx - startIdx + 1) * periodW, 6);
+                {/* 任务条 */}
+                {tasks.map(({ task, lane }) => {
+                  const x = dateX(task.start_date);
+                  const xEnd = dateX(task.report_deadline);
+                  const w = Math.max(xEnd - x + periodW, 8);
+                  const y = rowY + rowPadV + lane * laneH + (laneH - barH) / 2;
                   const isOverdue = task.status !== 'completed' && task.report_deadline < today;
                   const colorKey = isOverdue ? 'overdue' : task.status;
-                  const colors = isOverdue ? OVERDUE_COLOR : STATUS_COLORS[task.status];
+
+                  // 起止同日时用菱形节点表示单日任务
+                  const labelFits = w >= 52;
 
                   return (
-                    <g key={task.id}>
-                      <rect x={x + 1} y={rowY + barYOff} width={Math.max(w - 2, 4)} height={barH} rx={6} fill={`url(#gantt-bar-${colorKey})`} filter="url(#gantt-shadow)" />
-                      <rect x={x + 2} y={rowY + barYOff + 1} width={Math.max(w - 4, 2)} height={4} rx={3} fill="white" opacity={0.2} />
-                      <text x={x + 8} y={rowY + barYOff + barH / 2 + 4} fontSize={11} fontWeight={600} fill={colors.text} style={{ textShadow: '0 1px 2px rgba(0,0,0,0.15)' }}>{task.batch_id}</text>
-                      {viewMode === 'day' && (
-                        <polygon
-                          points={`${x + w - 1},${rowY + barYOff + barH / 2} ${x + w + 6},${rowY + barYOff + barH / 2 - 4} ${x + w + 11},${rowY + barYOff + barH / 2} ${x + w + 6},${rowY + barYOff + barH / 2 + 4}`}
-                          fill={isOverdue ? '#ef4444' : '#94a3b8'} opacity={0.7}
-                        />
+                    <g key={task.id ?? `${task.batch_id}-${lane}`}>
+                      <rect
+                        x={x + 1}
+                        y={y}
+                        width={Math.max(w - 2, 6)}
+                        height={barH}
+                        rx={11}
+                        fill={`url(#gantt-bar-${colorKey})`}
+                        filter="url(#gantt-shadow)"
+                      />
+                      {/* 批次号 */}
+                      {labelFits ? (
+                        <text x={x + Math.max(w, 8) / 2} y={y + barH / 2 + 4} textAnchor="middle" fontSize={10} fontWeight={600} fill="#fff">
+                          {task.batch_id}
+                        </text>
+                      ) : (
+                        <text x={x + w + 6} y={y + barH / 2 + 4} fontSize={10} fontWeight={600} fill={isOverdue ? '#dc2626' : '#475569'}>
+                          {task.batch_id}
+                        </text>
                       )}
-                      <text x={x + w + 16} y={rowY + barYOff + barH / 2 + 4} fontSize={9} fontWeight={600} fill={isOverdue ? '#ef4444' : '#64748b'}>
-                        {isOverdue ? '逾期' : task.status === 'completed' ? '' : statusLabel(task.status)}
-                      </text>
+                      {/* 逾期小标 */}
+                      {isOverdue && (
+                        <text
+                          x={labelFits ? x + Math.max(w, 8) + 6 : x + w + 6 + task.batch_id.length * 10 + 4}
+                          y={y + barH / 2 + 4}
+                          fontSize={10}
+                          fontWeight={700}
+                          fill="#dc2626"
+                        >
+                          逾期
+                        </text>
+                      )}
+                      {/* 基准徽标 */}
+                      {task.is_baseline === 1 && (
+                        <circle cx={x + 10} cy={y - 2} r={5} fill="#f59e0b" />
+                      )}
                     </g>
                   );
                 })}
@@ -271,10 +387,16 @@ export default function GanttChart({ items, width = 760 }: Props) {
           })}
         </svg>
       </div>
+
+      {/* 底部提示 */}
+      <div className="flex items-center gap-4 border-t border-slate-100 px-4 py-2 text-[10px] text-slate-400">
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500" />
+          基准批次
+        </span>
+        <span>条内显示批次号，条上圆点表示基准批次</span>
+        <span>虚线为今天</span>
+      </div>
     </div>
   );
-}
-
-function fmtDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
 }
