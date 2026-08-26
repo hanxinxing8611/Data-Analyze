@@ -110,11 +110,11 @@ export default function Sidebar() {
 
       {/* 当前用户身份（可切换，决定管理员/工程师权限） */}
       <div className="relative border-t border-white/[0.07] px-5 py-3">
-        <div className="flex flex-col items-center gap-2">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-xs font-bold text-slate-300">
+        <div className="flex flex-col items-start gap-2">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-sm font-bold text-slate-300">
             {engineerName ? engineerName.charAt(0) : '?'}
           </div>
-          <div className="min-w-0 w-full text-center">
+          <div className="min-w-0 w-full">
             <select
               value={engineerEmail}
               onClick={() => setEngineerList(loadEngineersConfig())}
@@ -124,7 +124,7 @@ export default function Sidebar() {
                 setCurrentEngineer(eng ? eng.name : '');
               }}
               title="切换当前身份（需与系统设置中配置的邮箱一致）"
-              className="w-full cursor-pointer appearance-none truncate rounded-md border border-white/10 bg-slate-700/60 px-2 py-1 text-xs font-medium text-slate-100 outline-none transition-colors hover:border-white/20 focus:border-blue-500/60"
+              className="w-full cursor-pointer appearance-none truncate rounded-md border border-white/10 bg-slate-700/60 px-2 py-1 text-sm font-medium text-slate-100 outline-none transition-colors hover:border-white/20 focus:border-blue-500/60"
             >
               <option value="" className="bg-slate-700 text-slate-100">选择邮箱…</option>
               {engineerList.map((en) => (
@@ -138,12 +138,12 @@ export default function Sidebar() {
               ))}
             </select>
             {engineerName && (
-              <div className="mt-0.5 truncate text-[10px] text-slate-400" title={engineerName}>
+              <div className="mt-0.5 truncate text-xs text-slate-400" title={engineerName}>
                 {engineerName}
               </div>
             )}
             <div
-              className={`mt-1 text-[10px] font-medium ${
+              className={`mt-1 text-xs font-medium ${
                 canWrite ? 'text-blue-400' : 'text-slate-500'
               }`}
             >
