@@ -1,6 +1,7 @@
-import { useEffect, useState, useCallback } from 'react';
+import { Suspense, useEffect, useState, useCallback } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
+import { Loading } from '../ui';
 
 const NAV_QUICK = [
   { to: '/', label: '数据总览', keyword: '总览' },
@@ -44,12 +45,36 @@ export default function AppLayout() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
+  /* 空闲时预取其余页面 chunk：首次进入某页时无需再等下载 */
+  useEffect(() => {
+    const w = window as Window & { requestIdleCallback?: (fn: () => void) => number; cancelIdleCallback?: (h: number) => void };
+    const idle = (cb: () => void) =>
+      typeof w.requestIdleCallback === 'function' ? w.requestIdleCallback(cb) : window.setTimeout(cb, 1500);
+    const t = idle(() => {
+      void import('../../pages/Dashboard');
+      void import('../../pages/DataManagement');
+      void import('../../pages/Comparison');
+      void import('../../pages/Schedule');
+      void import('../../pages/TaskStats');
+      void import('../../pages/Settings');
+      // 报告页依赖最重（jspdf/exceljs/echarts），最后预取
+      void import('../../pages/ReportEditor');
+    });
+    return () => {
+      if (typeof w.cancelIdleCallback === 'function') w.cancelIdleCallback(t as number);
+      else clearTimeout(t as number);
+    };
+  }, []);
+
   return (
     <div className="flex h-full">
       <Sidebar />
       <main className="min-w-0 flex-1 overflow-y-auto">
         <div key={location.pathname} className="animate-page-in mx-auto max-w-7xl px-8 py-8">
-          <Outlet />
+          {/* Suspense 边界放在布局内：路由切换只重载内容区，侧边栏常驻不闪白 */}
+          <Suspense fallback={<Loading text="正在加载页面…" />}>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
 

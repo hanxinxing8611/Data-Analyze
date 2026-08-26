@@ -1,11 +1,10 @@
-import { lazy, Suspense } from 'react';
+import { lazy } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { DataProvider } from './store/DataContext';
 import { CriteriaProvider } from './store/CriteriaContext';
 import { SelectionProvider } from './store/SelectionContext';
 import { ToastProvider } from './components/Toast';
 import AppLayout from './components/layout/AppLayout';
-import { Loading } from './components/ui';
 
 /* 路由级代码分割：首屏只加载当前页面所需的依赖
    （报告页的 jspdf/exceljs/html2canvas、对比页的 echarts 等 heavyweight
@@ -25,7 +24,6 @@ export default function App() {
       <CriteriaProvider>
         <SelectionProvider>
           <HashRouter>
-            <Suspense fallback={<Loading text="正在加载页面…" />}>
             <Routes>
               <Route element={<AppLayout />}>
                 <Route path="/" element={<Dashboard />} />
@@ -41,7 +39,6 @@ export default function App() {
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Route>
             </Routes>
-            </Suspense>
           </HashRouter>
         </SelectionProvider>
       </CriteriaProvider>
