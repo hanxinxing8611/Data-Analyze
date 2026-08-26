@@ -312,26 +312,15 @@ export default function Schedule() {
     }));
   };
 
-  /* 删除已保存工程师 */
-  const handleRemoveEngineer = (name: string) => {
-    setEngineers((prev) => {
-      const next = prev.filter((e) => e.name !== name);
-      saveEngineersConfig(next);
-      return next;
-    });
-  };
-
-  /* 提交时自动保存/更新工程师信息 */
+  /* 提交时补充工程师信息（仅更新名录中已存在者的邮箱；名录统一在系统设置中维护，
+     提交不再自动新增工程师，避免绕过系统设置产生游离条目） */
   const persistEngineer = (name: string, email: string) => {
+    if (!email) return;
     setEngineers((prev) => {
       const idx = prev.findIndex((e) => e.name === name);
-      let next: EngineerEntry[];
-      if (idx >= 0) {
-        next = [...prev];
-        if (email) next[idx] = { ...next[idx], email };
-      } else {
-        next = [...prev, { name, email }];
-      }
+      if (idx < 0 || prev[idx].email === email) return prev;
+      const next = [...prev];
+      next[idx] = { ...next[idx], email };
       saveEngineersConfig(next);
       return next;
     });
@@ -814,33 +803,6 @@ export default function Schedule() {
                 />
               </div>
             </div>
-
-          {/* 已保存负责人（自动记录，可删除） */}
-          {engineers.length > 0 && (
-            <div>
-              <div className="mb-1.5 text-xs font-medium text-slate-600">
-                已保存负责人（提交时自动记录，点击 × 删除）
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {engineers.map((e) => (
-                  <span
-                    key={e.name}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 py-1 pl-2.5 pr-1.5 text-xs text-slate-700"
-                  >
-                    <span className="font-medium">{e.name}</span>
-                    <button
-                      type="button"
-                      title={`删除 ${e.name}`}
-                      className="flex h-4 w-4 items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600"
-                      onClick={() => handleRemoveEngineer(e.name)}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
 
           <div className="flex items-center gap-3">
             <Button type="submit">
