@@ -1,7 +1,26 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ScheduleItem } from '../../types';
 
 type ViewMode = 'day' | 'week' | 'month';
+
+/** 各视图一次可见的时段数：日=两周(14天)，周=8周，月=6个月 */
+const VISIBLE_PERIODS: Record<ViewMode, number> = { day: 14, week: 8, month: 6 };
+
+/** 法定节假日表（按国务院办公厅当年通知维护；跨天区间，含首尾） */
+const HOLIDAYS: { name: string; start: string; end: string }[] = [
+  { name: '元旦', start: '2026-01-01', end: '2026-01-03' },
+  { name: '春节', start: '2026-02-15', end: '2026-02-23' },
+  { name: '清明节', start: '2026-04-04', end: '2026-04-06' },
+  { name: '劳动节', start: '2026-05-01', end: '2026-05-05' },
+  { name: '端午节', start: '2026-06-19', end: '2026-06-21' },
+  { name: '中秋节', start: '2026-09-25', end: '2026-09-27' },
+  { name: '国庆节', start: '2026-10-01', end: '2026-10-08' },
+];
+
+function holidayOf(d: string): string | null {
+  const h = HOLIDAYS.find((x) => d >= x.start && d <= x.end);
+  return h ? h.name : null;
+}
 
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
@@ -11,7 +30,15 @@ function dayDiff(a: string, b: string): number {
   return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000);
 }
 
-interface Period { key: string; label: string; startDate: string; endDate: string; weekend: boolean }
+interface Period {
+  key: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  weekend: boolean;
+  /** 时段内是否含法定节假日（日视图用） */
+  holiday: string | null;
+}
 
 function fmtDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -20,20 +47,14 @@ function fmtDate(d: Date): string {
 /* ---------------- 时段生成 ---------------- */
 
 function genPeriods(items: ScheduleItem[], mode: ViewMode, today: string): Period[] {
-  if (items.length === 0) {
-    const d = new Date();
-    const start = new Date(d); start.setDate(d.getDate() - 3);
-    const end = new Date(d); end.setDate(d.getDate() + 6);
-    return mode === 'day' ? genDayPeriods(start, end) : mode === 'week' ? genWeekPeriods(start, end) : genMonthPeriods(start, end);
-  }
   let minD = today;
   let maxD = today;
   for (const it of items) {
     if (it.start_date < minD) minD = it.start_date;
     if (it.report_deadline > maxD) maxD = it.report_deadline;
   }
-  const min = new Date(minD); min.setDate(min.getDate() - 2);
-  const max = new Date(maxD); max.setDate(max.getDate() + 2);
+  const min = new Date(minD); min.setDate(min.getDate() - 14);
+  const max = new Date(maxD); max.setDate(max.getDate() + 14);
   return mode === 'day' ? genDayPeriods(min, max) : mode === 'week' ? genWeekPeriods(min, max) : genMonthPeriods(min, max);
 }
 
@@ -43,12 +64,14 @@ function genDayPeriods(start: Date, end: Date): Period[] {
   for (let i = 0; i < days; i++) {
     const d = new Date(start); d.setDate(d.getDate() + i);
     const ds = fmtDate(d);
+    const holiday = holidayOf(ds);
     periods.push({
       key: ds,
       label: `${d.getMonth() + 1}/${d.getDate()}`,
       startDate: ds,
       endDate: ds,
       weekend: d.getDay() === 0 || d.getDay() === 6,
+      holiday,
     });
   }
   return periods;
@@ -69,6 +92,7 @@ function genWeekPeriods(start: Date, end: Date): Period[] {
         startDate: fmtDate(monday),
         endDate: fmtDate(sunday),
         weekend: false,
+        holiday: null,
       });
     }
     cur.setDate(cur.getDate() + 7);
@@ -87,6 +111,7 @@ function genMonthPeriods(start: Date, end: Date): Period[] {
       startDate: fmtDate(cur),
       endDate: fmtDate(lastDay),
       weekend: false,
+      holiday: null,
     });
     cur.setMonth(cur.getMonth() + 1);
   }
@@ -100,9 +125,26 @@ interface Props {
   width?: number;
 }
 
-export default function GanttChart({ items, width = 760 }: Props) {
+export default function GanttChart({ items }: Props) {
   const today = todayStr();
   const [viewMode, setViewMode] = useState<ViewMode>('day');
+
+  /* 容器实测宽度（用于计算每时段像素宽） */
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [containerW, setContainerW] = useState(900);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w && w > 100) setContainerW(w);
+    });
+    ro.observe(el);
+    setContainerW(el.clientWidth || 900);
+    return () => ro.disconnect();
+  }, []);
 
   const periods = useMemo(() => genPeriods(items, viewMode, today), [items, viewMode, today]);
 
@@ -136,6 +178,49 @@ export default function GanttChart({ items, width = 760 }: Props) {
     return m;
   }, [items, engineers]);
 
+  /* 打开/切换视图后滚到今天居中 */
+  const visibleCount = VISIBLE_PERIODS[viewMode];
+  const periodW = containerW / visibleCount;
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const idx = periods.findIndex((p) => today >= p.startDate && today <= p.endDate);
+    const target = idx === -1 ? 0 : idx;
+    el.scrollLeft = Math.max(0, (target + 0.5) * periodW - (el.clientWidth || containerW) / 2);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, periods.length, containerW]);
+
+  /* 横向拖动平移 */
+  const drag = useRef<{ x: number; sl: number } | null>(null);
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    drag.current = { x: e.clientX, sl: el.scrollLeft };
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!drag.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollLeft = drag.current.sl - (e.clientX - drag.current.x);
+  };
+  const endDrag = () => { drag.current = null; };
+
+  /** 按一次按钮平移一个时段（日视图=1天，周视图=1周，月视图=1月） */
+  const nudge = (dir: number) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * periodW, behavior: 'smooth' });
+  };
+  const backToToday = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const idx = periods.findIndex((p) => today >= p.startDate && today <= p.endDate);
+    const target = idx === -1 ? 0 : idx;
+    el.scrollTo({ left: Math.max(0, (target + 0.5) * periodW - el.clientWidth / 2), behavior: 'smooth' });
+  };
+
   if (items.length === 0) {
     return (
       <div className="p-5">
@@ -148,12 +233,11 @@ export default function GanttChart({ items, width = 760 }: Props) {
 
   /* ---- 几何参数 ---- */
   const padLeft = 92;
-  const headH = 34;
+  const headH = 40;
   const laneH = 30;
   const barH = 22;
   const rowPadV = 8;
-  const chartW = width - padLeft;
-  const periodW = chartW / periods.length;
+  const width = padLeft + periods.length * periodW;
 
   const engRows = engineers.map((eng) => {
     const lanes = layout.get(eng) || [];
@@ -162,7 +246,7 @@ export default function GanttChart({ items, width = 760 }: Props) {
   });
   const totalH = headH + engRows.reduce((sum, r) => sum + r.rowH, 0) + 8;
 
-  /** 时间 → 时段索引（-1 表示超出范围，取边界） */
+  /** 时间 → 时段索引（超出范围取边界） */
   const dateToIdx = (d: string): number => {
     if (viewMode === 'day') {
       const idx = dayDiff(periods[0].startDate, d);
@@ -173,7 +257,7 @@ export default function GanttChart({ items, width = 760 }: Props) {
     return idx;
   };
 
-  /** 日期在时段内的水平偏移比例（日视图精确到天，周/月视图靠左） */
+  /** 日期在时段内的水平偏移比例（日视图精确到天，周/月视图按天比例） */
   const dateX = (d: string): number => {
     const idx = dateToIdx(d);
     if (viewMode === 'day') return padLeft + idx * periodW;
@@ -184,24 +268,52 @@ export default function GanttChart({ items, width = 760 }: Props) {
   };
 
   return (
-    <div>
-      {/* 顶部：视图切换 + 图例 */}
+    <div ref={wrapRef}>
+      {/* 顶部：视图切换 + 平移控制 + 图例 */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 pb-2.5">
-        <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-0.5">
-          {(['day', 'week', 'month'] as ViewMode[]).map((mode) => (
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-0.5">
+            {(['day', 'week', 'month'] as ViewMode[]).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setViewMode(mode)}
+                className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
+                  viewMode === mode
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {mode === 'day' ? '日' : mode === 'week' ? '周' : '月'}
+              </button>
+            ))}
+          </div>
+          {/* 平移按钮 + 回到今天 */}
+          <div className="flex items-center gap-1">
             <button
-              key={mode}
               type="button"
-              onClick={() => setViewMode(mode)}
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
-                viewMode === mode
-                  ? 'bg-white text-blue-600 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
+              onClick={() => nudge(-1)}
+              title={viewMode === 'day' ? '前一天' : viewMode === 'week' ? '前一周' : '前一月'}
+              className="flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:border-blue-300 hover:text-blue-600"
             >
-              {mode === 'day' ? '日' : mode === 'week' ? '周' : '月'}
+              ‹
             </button>
-          ))}
+            <button
+              type="button"
+              onClick={backToToday}
+              className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-500 transition hover:border-blue-300 hover:text-blue-600"
+            >
+              今天
+            </button>
+            <button
+              type="button"
+              onClick={() => nudge(1)}
+              title={viewMode === 'day' ? '后一天' : viewMode === 'week' ? '后一周' : '后一月'}
+              className="flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:border-blue-300 hover:text-blue-600"
+            >
+              ›
+            </button>
+          </div>
         </div>
         <div className="flex items-center gap-3 text-[11px] text-slate-500">
           {([
@@ -218,24 +330,39 @@ export default function GanttChart({ items, width = 760 }: Props) {
         </div>
       </div>
 
-      {/* 甘特图主体（横向滚动区） */}
-      <div className="overflow-x-auto">
+      {/* 甘特图主体（可见窗口 + 横向拖动平移） */}
+      <div
+        ref={scrollRef}
+        className="scroll-shadow-x cursor-grab select-none overflow-x-auto active:cursor-grabbing"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerLeave={endDrag}
+      >
         <svg
           viewBox={`0 0 ${width} ${totalH}`}
-          width="100%"
+          width={width}
+          height={totalH}
           className="block"
-          style={{ minWidth: width, fontFamily: "Arial, 'Microsoft YaHei', sans-serif" }}
+          style={{ fontFamily: "Arial, 'Microsoft YaHei', sans-serif" }}
         >
           {/* 条形填充使用纯色而非 url(#id) 渐变/滤镜引用：
               本应用为 hash 路由（URL 含 #），部分浏览器下 url(#片段) 解析会失效，
               且 filter 引用失效时整个元素不渲染（SVG 规范），故全部改用纯色 */}
 
-          {/* 周末底纹（日视图） */}
-          {viewMode === 'day' && periods.map((p, i) => (
-            p.weekend && (
-              <rect key={`wk-${p.key}`} x={padLeft + i * periodW} y={0} width={periodW} height={totalH} fill="#f1f5f9" />
-            )
-          ))}
+          {/* 时段底色：今天=浅蓝，周末/法定节假日=浅灰（日视图精确到天；周/月视图按含今天） */}
+          {periods.map((p, i) => {
+            const x = padLeft + i * periodW;
+            const isToday = today >= p.startDate && today <= p.endDate;
+            const rest = viewMode === 'day' ? p.weekend || p.holiday !== null : p.weekend;
+            if (isToday) {
+              return <rect key={`bg-${p.key}`} x={x} y={0} width={periodW} height={totalH} fill="#dbeafe" />;
+            }
+            if (rest) {
+              return <rect key={`bg-${p.key}`} x={x} y={0} width={periodW} height={totalH} fill="#f1f5f9" />;
+            }
+            return null;
+          })}
 
           {/* 表头背景 */}
           <rect x={0} y={0} width={width} height={headH} fill="#f8fafc" />
@@ -249,28 +376,35 @@ export default function GanttChart({ items, width = 760 }: Props) {
               y1={headH}
               x2={padLeft + i * periodW}
               y2={totalH}
-              stroke="#f1f5f9"
+              stroke="#e2e8f0"
               strokeWidth={1}
             />
           ))}
           <line x1={padLeft} y1={headH} x2={padLeft} y2={totalH} stroke="#e2e8f0" strokeWidth={1} />
 
-          {/* 时段刻度文字 */}
+          {/* 时段刻度文字（日视图两行：日期 + 节假日/星期） */}
           {periods.map((p, i) => {
             const cx = padLeft + i * periodW + periodW / 2;
             const isToday = today >= p.startDate && today <= p.endDate;
+            const sub = viewMode === 'day' ? (p.holiday ?? '') : '';
             return (
-              <text
-                key={`tick-${p.key}`}
-                x={cx}
-                y={headH / 2 + 4}
-                textAnchor="middle"
-                fontSize={viewMode === 'day' ? 10 : 11}
-                fontWeight={isToday ? 700 : 400}
-                fill={isToday ? '#dc2626' : p.weekend ? '#cbd5e1' : '#94a3b8'}
-              >
-                {p.label}
-              </text>
+              <g key={`tick-${p.key}`}>
+                <text
+                  x={cx}
+                  y={viewMode === 'day' ? 16 : headH / 2 + 4}
+                  textAnchor="middle"
+                  fontSize={viewMode === 'day' ? 10 : 11}
+                  fontWeight={isToday ? 700 : 400}
+                  fill={isToday ? '#2563eb' : p.weekend || p.holiday ? '#cbd5e1' : '#94a3b8'}
+                >
+                  {p.label}
+                </text>
+                {sub && (
+                  <text x={cx} y={30} textAnchor="middle" fontSize={8.5} fontWeight={600} fill="#f97316">
+                    {sub}
+                  </text>
+                )}
+              </g>
             );
           })}
 
@@ -281,8 +415,8 @@ export default function GanttChart({ items, width = 760 }: Props) {
             const x = padLeft + (idx + 0.5) * periodW;
             return (
               <g>
-                <line x1={x} y1={headH} x2={x} y2={totalH} stroke="#ef4444" strokeWidth={1.5} strokeDasharray="3 3" opacity={0.55} />
-                <rect x={x - 15} y={headH + 4} width={30} height={16} rx={8} fill="#ef4444" />
+                <line x1={x} y1={headH} x2={x} y2={totalH} stroke="#2563eb" strokeWidth={1.5} strokeDasharray="3 3" opacity={0.6} />
+                <rect x={x - 15} y={headH + 4} width={30} height={16} rx={8} fill="#2563eb" />
                 <text x={x} y={headH + 15.5} textAnchor="middle" fontSize={9} fontWeight={700} fill="#fff">今天</text>
               </g>
             );
@@ -295,13 +429,13 @@ export default function GanttChart({ items, width = 760 }: Props) {
 
             return (
               <g key={eng}>
-                {/* 行底色（隔行） */}
+                {/* 行底色（隔行，半透明让底纹透出） */}
                 <rect
                   x={0}
                   y={rowY}
                   width={width}
                   height={rowH}
-                  fill={rowIndex % 2 === 0 ? '#ffffff' : '#fafbfc'}
+                  fill={rowIndex % 2 === 0 ? 'rgba(255,255,255,0.35)' : 'rgba(248,250,252,0.55)'}
                 />
                 <line x1={0} y1={rowY + rowH} x2={width} y2={rowY + rowH} stroke="#f1f5f9" strokeWidth={1} />
 
@@ -390,7 +524,7 @@ export default function GanttChart({ items, width = 760 }: Props) {
       </div>
 
       {/* 底部提示 */}
-      <div className="flex items-center gap-4 border-t border-slate-100 px-4 py-2 text-[10px] text-slate-400">
+      <div className="flex flex-wrap items-center gap-4 border-t border-slate-100 px-4 py-2 text-[10px] text-slate-400">
         <span className="flex items-center gap-1.5">
           <svg width="10" height="13" viewBox="0 0 10 13" aria-hidden="true">
             <line x1="0.8" y1="0" x2="0.8" y2="13" stroke="#d97706" strokeWidth="1.6" strokeLinecap="round" />
@@ -398,8 +532,16 @@ export default function GanttChart({ items, width = 760 }: Props) {
           </svg>
           基准批次
         </span>
-        <span>条内显示批次号，小旗子插在条形正中表示基准批次</span>
-        <span>虚线为今天</span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-4 rounded-sm bg-blue-100" />
+          今天
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-4 rounded-sm bg-slate-100" />
+          周末 / 法定节假日
+        </span>
+        <span>小旗子插在条形正中表示基准批次</span>
+        <span>按住时间轴左右拖动可查看过去与未来的计划</span>
       </div>
     </div>
   );
