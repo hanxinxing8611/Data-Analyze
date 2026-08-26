@@ -232,12 +232,12 @@ export default function GanttChart({ items }: Props) {
   }
 
   /* ---- 几何参数 ---- */
-  const padLeft = 92;
+  const nameColW = 92;
   const headH = 40;
   const laneH = 30;
   const barH = 22;
   const rowPadV = 8;
-  const width = padLeft + periods.length * periodW;
+  const width = periods.length * periodW;
 
   const engRows = engineers.map((eng) => {
     const lanes = layout.get(eng) || [];
@@ -260,11 +260,11 @@ export default function GanttChart({ items }: Props) {
   /** 日期在时段内的水平偏移比例（日视图精确到天，周/月视图按天比例） */
   const dateX = (d: string): number => {
     const idx = dateToIdx(d);
-    if (viewMode === 'day') return padLeft + idx * periodW;
+    if (viewMode === 'day') return idx * periodW;
     const p = periods[idx];
     const total = dayDiff(p.startDate, p.endDate) || 1;
     const offset = Math.max(0, Math.min(total, dayDiff(p.startDate, d)));
-    return padLeft + (idx + offset / total) * periodW;
+    return (idx + offset / total) * periodW;
   };
 
   return (
@@ -330,197 +330,205 @@ export default function GanttChart({ items }: Props) {
         </div>
       </div>
 
-      {/* 甘特图主体（可见窗口 + 横向拖动平移） */}
-      <div
-        ref={scrollRef}
-        className="scroll-shadow-x cursor-grab select-none overflow-x-auto active:cursor-grabbing"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerLeave={endDrag}
-      >
-        <svg
-          viewBox={`0 0 ${width} ${totalH}`}
-          width={width}
-          height={totalH}
-          className="block"
-          style={{ fontFamily: "Arial, 'Microsoft YaHei', sans-serif" }}
-        >
-          {/* 条形填充使用纯色而非 url(#id) 渐变/滤镜引用：
-              本应用为 hash 路由（URL 含 #），部分浏览器下 url(#片段) 解析会失效，
-              且 filter 引用失效时整个元素不渲染（SVG 规范），故全部改用纯色 */}
-
-          {/* 时段底色：今天=浅蓝，周末/法定节假日=浅灰（日视图精确到天；周/月视图按含今天） */}
-          {periods.map((p, i) => {
-            const x = padLeft + i * periodW;
-            const isToday = today >= p.startDate && today <= p.endDate;
-            const rest = viewMode === 'day' ? p.weekend || p.holiday !== null : p.weekend;
-            if (isToday) {
-              return <rect key={`bg-${p.key}`} x={x} y={0} width={periodW} height={totalH} fill="#dbeafe" />;
-            }
-            if (rest) {
-              return <rect key={`bg-${p.key}`} x={x} y={0} width={periodW} height={totalH} fill="#f1f5f9" />;
-            }
-            return null;
-          })}
-
-          {/* 表头背景 */}
-          <rect x={0} y={0} width={width} height={headH} fill="#f8fafc" />
-          <line x1={0} y1={headH} x2={width} y2={headH} stroke="#e2e8f0" strokeWidth={1} />
-
-          {/* 纵向网格线 */}
-          {periods.map((p, i) => (
-            <line
-              key={`grid-${p.key}`}
-              x1={padLeft + i * periodW}
-              y1={headH}
-              x2={padLeft + i * periodW}
-              y2={totalH}
-              stroke="#e2e8f0"
-              strokeWidth={1}
-            />
+      {/* 甘特图主体：左侧工程师名列固定不随横向拖动滚动，右侧时间区可拖动 */}
+      <div className="flex">
+        {/* 固定列：工程师名 */}
+        <div className="shrink-0 border-r border-slate-200" style={{ width: nameColW }}>
+          <div style={{ height: headH }} className="border-b border-slate-200 bg-slate-50" />
+          {engRows.map(({ eng, laneCount, rowH }, rowIndex) => (
+            <div
+              key={eng}
+              style={{ height: rowH }}
+              className={`flex flex-col items-end justify-center pr-2.5 ${
+                rowIndex % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'
+              }`}
+            >
+              <span className="max-w-full truncate text-xs font-semibold text-slate-700" title={eng}>
+                {eng}
+              </span>
+              <span className="text-[9px] text-slate-400">
+                {layout.get(eng)?.length ?? 0} 个任务{laneCount > 1 ? ` · ${laneCount}行` : ''}
+              </span>
+            </div>
           ))}
-          <line x1={padLeft} y1={headH} x2={padLeft} y2={totalH} stroke="#e2e8f0" strokeWidth={1} />
+        </div>
 
-          {/* 时段刻度文字（日视图两行：日期 + 节假日/星期） */}
-          {periods.map((p, i) => {
-            const cx = padLeft + i * periodW + periodW / 2;
-            const isToday = today >= p.startDate && today <= p.endDate;
-            const sub = viewMode === 'day' ? (p.holiday ?? '') : '';
-            return (
-              <g key={`tick-${p.key}`}>
-                <text
-                  x={cx}
-                  y={viewMode === 'day' ? 16 : headH / 2 + 4}
-                  textAnchor="middle"
-                  fontSize={viewMode === 'day' ? 10 : 11}
-                  fontWeight={isToday ? 700 : 400}
-                  fill={isToday ? '#2563eb' : p.weekend || p.holiday ? '#cbd5e1' : '#94a3b8'}
-                >
-                  {p.label}
-                </text>
-                {sub && (
-                  <text x={cx} y={30} textAnchor="middle" fontSize={8.5} fontWeight={600} fill="#f97316">
-                    {sub}
+        {/* 滚动区：时间轴 + 任务条 */}
+        <div
+          ref={scrollRef}
+          className="scroll-shadow-x min-w-0 flex-1 cursor-grab select-none overflow-x-auto active:cursor-grabbing"
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endDrag}
+          onPointerLeave={endDrag}
+        >
+          <svg
+            viewBox={`0 0 ${width} ${totalH}`}
+            width={width}
+            height={totalH}
+            className="block"
+            style={{ fontFamily: "Arial, 'Microsoft YaHei', sans-serif" }}
+          >
+            {/* 条形填充使用纯色而非 url(#id) 渐变/滤镜引用：
+                本应用为 hash 路由（URL 含 #），部分浏览器下 url(#片段) 解析会失效，
+                且 filter 引用失效时整个元素不渲染（SVG 规范），故全部改用纯色 */}
+
+            {/* 时段底色：今天=浅蓝，周末/法定节假日=浅灰 */}
+            {periods.map((p, i) => {
+              const x = i * periodW;
+              const isToday = today >= p.startDate && today <= p.endDate;
+              const rest = p.weekend || p.holiday !== null;
+              if (isToday) {
+                return <rect key={`bg-${p.key}`} x={x} y={0} width={periodW} height={totalH} fill="#dbeafe" />;
+              }
+              if (rest) {
+                return <rect key={`bg-${p.key}`} x={x} y={0} width={periodW} height={totalH} fill="#f1f5f9" />;
+              }
+              return null;
+            })}
+
+            {/* 表头背景 */}
+            <rect x={0} y={0} width={width} height={headH} fill="#f8fafc" />
+            <line x1={0} y1={headH} x2={width} y2={headH} stroke="#e2e8f0" strokeWidth={1} />
+
+            {/* 纵向网格线 */}
+            {periods.map((p, i) => (
+              <line
+                key={`grid-${p.key}`}
+                x1={i * periodW}
+                y1={headH}
+                x2={i * periodW}
+                y2={totalH}
+                stroke="#e2e8f0"
+                strokeWidth={1}
+              />
+            ))}
+
+            {/* 时段刻度文字（日视图两行：日期 + 节假日名） */}
+            {periods.map((p, i) => {
+              const cx = i * periodW + periodW / 2;
+              const isToday = today >= p.startDate && today <= p.endDate;
+              const sub = viewMode === 'day' ? (p.holiday ?? '') : '';
+              return (
+                <g key={`tick-${p.key}`}>
+                  <text
+                    x={cx}
+                    y={viewMode === 'day' ? 16 : headH / 2 + 4}
+                    textAnchor="middle"
+                    fontSize={viewMode === 'day' ? 10 : 11}
+                    fontWeight={isToday ? 700 : 400}
+                    fill={isToday ? '#2563eb' : p.weekend || p.holiday ? '#cbd5e1' : '#94a3b8'}
+                  >
+                    {p.label}
                   </text>
-                )}
-              </g>
-            );
-          })}
+                  {sub && (
+                    <text x={cx} y={30} textAnchor="middle" fontSize={8.5} fontWeight={600} fill="#f97316">
+                      {sub}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
 
-          {/* 今天标记线 */}
-          {(() => {
-            const idx = periods.findIndex((p) => today >= p.startDate && today <= p.endDate);
-            if (idx === -1) return null;
-            const x = padLeft + (idx + 0.5) * periodW;
-            return (
-              <g>
-                <line x1={x} y1={headH} x2={x} y2={totalH} stroke="#2563eb" strokeWidth={1.5} strokeDasharray="3 3" opacity={0.6} />
-                <rect x={x - 15} y={headH + 4} width={30} height={16} rx={8} fill="#2563eb" />
-                <text x={x} y={headH + 15.5} textAnchor="middle" fontSize={9} fontWeight={700} fill="#fff">今天</text>
-              </g>
-            );
-          })()}
+            {/* 今天标记线 */}
+            {(() => {
+              const idx = periods.findIndex((p) => today >= p.startDate && today <= p.endDate);
+              if (idx === -1) return null;
+              const x = (idx + 0.5) * periodW;
+              return (
+                <g>
+                  <line x1={x} y1={headH} x2={x} y2={totalH} stroke="#2563eb" strokeWidth={1.5} strokeDasharray="3 3" opacity={0.6} />
+                  <rect x={x - 15} y={headH + 4} width={30} height={16} rx={8} fill="#2563eb" />
+                  <text x={x} y={headH + 15.5} textAnchor="middle" fontSize={9} fontWeight={700} fill="#fff">今天</text>
+                </g>
+              );
+            })()}
 
-          {/* 工程师行 */}
-          {engRows.map(({ eng, laneCount, rowH }, rowIndex) => {
-            const rowY = headH + engRows.slice(0, rowIndex).reduce((s, r) => s + r.rowH, 0);
-            const tasks = layout.get(eng) || [];
+            {/* 任务条（按工程师行偏移绘制） */}
+            {engRows.map(({ eng }, rowIndex) => {
+              const rowY = headH + engRows.slice(0, rowIndex).reduce((s, r) => s + r.rowH, 0);
+              const tasks = layout.get(eng) || [];
 
-            return (
-              <g key={eng}>
-                {/* 行底色（隔行，半透明让底纹透出） */}
-                <rect
-                  x={0}
-                  y={rowY}
-                  width={width}
-                  height={rowH}
-                  fill={rowIndex % 2 === 0 ? 'rgba(255,255,255,0.35)' : 'rgba(248,250,252,0.55)'}
-                />
-                <line x1={0} y1={rowY + rowH} x2={width} y2={rowY + rowH} stroke="#f1f5f9" strokeWidth={1} />
+              return (
+                <g key={eng}>
+                  {/* 行分隔线（隔行底色由时段底色+隔行浅色叠加，保持简洁） */}
+                  <line x1={0} y1={rowY} x2={width} y2={rowY} stroke="#f1f5f9" strokeWidth={1} />
 
-                {/* 工程师名（含任务数） */}
-                <text x={padLeft - 10} y={rowY + rowH / 2 - 2} textAnchor="end" fontSize={12} fontWeight={600} fill="#334155">
-                  {eng}
-                </text>
-                <text x={padLeft - 10} y={rowY + rowH / 2 + 12} textAnchor="end" fontSize={9} fill="#94a3b8">
-                  {tasks.length} 个任务{laneCount > 1 ? ` · ${laneCount}行` : ''}
-                </text>
+                  {/* 任务条（纯色填充，不用 url(#id) 渐变/滤镜引用） */}
+                  {tasks.map(({ task, lane }) => {
+                    const x = dateX(task.start_date);
+                    const xEnd = dateX(task.report_deadline);
+                    const w = Math.max(xEnd - x + periodW, 8);
+                    const y = rowY + rowPadV + lane * laneH + (laneH - barH) / 2;
+                    const isOverdue = task.status !== 'completed' && task.report_deadline < today;
+                    const barColor = isOverdue
+                      ? '#dc2626'
+                      : task.status === 'in_progress'
+                        ? '#2563eb'
+                        : task.status === 'completed'
+                          ? '#10b981'
+                          : '#64748b';
+                    const barW = Math.max(w - 2, 6);
 
-                {/* 任务条（纯色填充，不用 url(#id) 渐变/滤镜引用） */}
-                {tasks.map(({ task, lane }) => {
-                  const x = dateX(task.start_date);
-                  const xEnd = dateX(task.report_deadline);
-                  const w = Math.max(xEnd - x + periodW, 8);
-                  const y = rowY + rowPadV + lane * laneH + (laneH - barH) / 2;
-                  const isOverdue = task.status !== 'completed' && task.report_deadline < today;
-                  const barColor = isOverdue
-                    ? '#dc2626'
-                    : task.status === 'in_progress'
-                      ? '#2563eb'
-                      : task.status === 'completed'
-                        ? '#10b981'
-                        : '#64748b';
-                  const barW = Math.max(w - 2, 6);
+                    // 条形足够宽时批次号放条内
+                    const labelFits = w >= 52;
 
-                  // 条形足够宽时批次号放条内
-                  const labelFits = w >= 52;
-
-                  return (
-                    <g key={task.id ?? `${task.batch_id}-${lane}`}>
-                      {/* 条形（50% 透明度） */}
-                      <rect
-                        x={x + 1}
-                        y={y}
-                        width={barW}
-                        height={barH}
-                        rx={11}
-                        fill={barColor}
-                        fillOpacity={0.5}
-                      />
-                      {/* 批次号 */}
-                      {labelFits ? (
-                        <text x={x + Math.max(w, 8) / 2} y={y + barH / 2 + 4} textAnchor="middle" fontSize={10} fontWeight={600} fill="#334155">
-                          {task.batch_id}
-                        </text>
-                      ) : (
-                        <text x={x + w + 6} y={y + barH / 2 + 4} fontSize={10} fontWeight={600} fill={isOverdue ? '#dc2626' : '#475569'}>
-                          {task.batch_id}
-                        </text>
-                      )}
-                      {/* 逾期小标 */}
-                      {isOverdue && (
-                        <text
-                          x={labelFits ? x + Math.max(w, 8) + 6 : x + w + 6 + task.batch_id.length * 10 + 4}
-                          y={y + barH / 2 + 4}
-                          fontSize={10}
-                          fontWeight={700}
-                          fill="#dc2626"
-                        >
-                          逾期
-                        </text>
-                      )}
-                      {/* 基准批次：黄色小旗子，插在条形图正中 */}
-                      {task.is_baseline === 1 && (() => {
-                        const fx = x + 1 + barW / 2;
-                        const flagH = 13;
-                        const flagW = 9;
-                        return (
-                          <g>
-                            {/* 旗杆 */}
-                            <line x1={fx} y1={y} x2={fx} y2={y - flagH} stroke="#d97706" strokeWidth={1.6} strokeLinecap="round" />
-                            {/* 旗面 */}
-                            <path d={`M${fx} ${y - flagH} L${fx + flagW} ${y - flagH + 3.5} L${fx} ${y - flagH + 7} Z`} fill="#f59e0b" />
-                          </g>
-                        );
-                      })()}
-                    </g>
-                  );
-                })}
-              </g>
-            );
-          })}
-        </svg>
+                    return (
+                      <g key={task.id ?? `${task.batch_id}-${lane}`}>
+                        {/* 条形（50% 透明度） */}
+                        <rect
+                          x={x + 1}
+                          y={y}
+                          width={barW}
+                          height={barH}
+                          rx={11}
+                          fill={barColor}
+                          fillOpacity={0.5}
+                        />
+                        {/* 批次号 */}
+                        {labelFits ? (
+                          <text x={x + Math.max(w, 8) / 2} y={y + barH / 2 + 4} textAnchor="middle" fontSize={10} fontWeight={600} fill="#334155">
+                            {task.batch_id}
+                          </text>
+                        ) : (
+                          <text x={x + w + 6} y={y + barH / 2 + 4} fontSize={10} fontWeight={600} fill={isOverdue ? '#dc2626' : '#475569'}>
+                            {task.batch_id}
+                          </text>
+                        )}
+                        {/* 逾期小标 */}
+                        {isOverdue && (
+                          <text
+                            x={labelFits ? x + Math.max(w, 8) + 6 : x + w + 6 + task.batch_id.length * 10 + 4}
+                            y={y + barH / 2 + 4}
+                            fontSize={10}
+                            fontWeight={700}
+                            fill="#dc2626"
+                          >
+                            逾期
+                          </text>
+                        )}
+                        {/* 基准批次：黄色小旗子，插在条形图正中 */}
+                        {task.is_baseline === 1 && (() => {
+                          const fx = x + 1 + barW / 2;
+                          const flagH = 13;
+                          const flagW = 9;
+                          return (
+                            <g>
+                              {/* 旗杆 */}
+                              <line x1={fx} y1={y} x2={fx} y2={y - flagH} stroke="#d97706" strokeWidth={1.6} strokeLinecap="round" />
+                              {/* 旗面 */}
+                              <path d={`M${fx} ${y - flagH} L${fx + flagW} ${y - flagH + 3.5} L${fx} ${y - flagH + 7} Z`} fill="#f59e0b" />
+                            </g>
+                          );
+                        })()}
+                      </g>
+                    );
+                  })}
+                </g>
+              );
+            })}
+          </svg>
+        </div>
       </div>
 
       {/* 底部提示 */}
@@ -541,7 +549,7 @@ export default function GanttChart({ items }: Props) {
           周末 / 法定节假日
         </span>
         <span>小旗子插在条形正中表示基准批次</span>
-        <span>按住时间轴左右拖动可查看过去与未来的计划</span>
+        <span>按住时间轴左右拖动可查看过去与未来的计划，最左侧工程师列固定不动</span>
       </div>
     </div>
   );
