@@ -327,23 +327,26 @@ export default function GanttChart({ items, width = 760 }: Props) {
                       : task.status === 'completed'
                         ? '#10b981'
                         : '#64748b';
+                  const barW = Math.max(w - 2, 6);
 
                   // 条形足够宽时批次号放条内
                   const labelFits = w >= 52;
 
                   return (
                     <g key={task.id ?? `${task.batch_id}-${lane}`}>
+                      {/* 条形（50% 透明度） */}
                       <rect
                         x={x + 1}
                         y={y}
-                        width={Math.max(w - 2, 6)}
+                        width={barW}
                         height={barH}
                         rx={11}
                         fill={barColor}
+                        fillOpacity={0.5}
                       />
                       {/* 批次号 */}
                       {labelFits ? (
-                        <text x={x + Math.max(w, 8) / 2} y={y + barH / 2 + 4} textAnchor="middle" fontSize={10} fontWeight={600} fill="#fff">
+                        <text x={x + Math.max(w, 8) / 2} y={y + barH / 2 + 4} textAnchor="middle" fontSize={10} fontWeight={600} fill="#334155">
                           {task.batch_id}
                         </text>
                       ) : (
@@ -363,10 +366,20 @@ export default function GanttChart({ items, width = 760 }: Props) {
                           逾期
                         </text>
                       )}
-                      {/* 基准徽标 */}
-                      {task.is_baseline === 1 && (
-                        <circle cx={x + 10} cy={y - 2} r={5} fill="#f59e0b" />
-                      )}
+                      {/* 基准批次：黄色小旗子，插在条形图正中 */}
+                      {task.is_baseline === 1 && (() => {
+                        const fx = x + 1 + barW / 2;
+                        const flagH = 13;
+                        const flagW = 9;
+                        return (
+                          <g>
+                            {/* 旗杆 */}
+                            <line x1={fx} y1={y} x2={fx} y2={y - flagH} stroke="#d97706" strokeWidth={1.6} strokeLinecap="round" />
+                            {/* 旗面 */}
+                            <path d={`M${fx} ${y - flagH} L${fx + flagW} ${y - flagH + 3.5} L${fx} ${y - flagH + 7} Z`} fill="#f59e0b" />
+                          </g>
+                        );
+                      })()}
                     </g>
                   );
                 })}
@@ -379,10 +392,13 @@ export default function GanttChart({ items, width = 760 }: Props) {
       {/* 底部提示 */}
       <div className="flex items-center gap-4 border-t border-slate-100 px-4 py-2 text-[10px] text-slate-400">
         <span className="flex items-center gap-1.5">
-          <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500" />
+          <svg width="10" height="13" viewBox="0 0 10 13" aria-hidden="true">
+            <line x1="0.8" y1="0" x2="0.8" y2="13" stroke="#d97706" strokeWidth="1.6" strokeLinecap="round" />
+            <path d="M0.8 0 L10 3.5 L0.8 7 Z" fill="#f59e0b" />
+          </svg>
           基准批次
         </span>
-        <span>条内显示批次号，条上圆点表示基准批次</span>
+        <span>条内显示批次号，小旗子插在条形正中表示基准批次</span>
         <span>虚线为今天</span>
       </div>
     </div>
