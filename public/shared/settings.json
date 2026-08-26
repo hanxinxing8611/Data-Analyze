@@ -1,5 +1,58 @@
 {
-  "updatedAt": "2026-08-26T08:45:56.777Z",
+  "updatedAt": "2026-08-26T09:34:02.079Z",
+  "criteriaSets": {
+    "微晶": {
+      "championRule": {
+        "enabled": true,
+        "threshold": -0.4
+      },
+      "medianRule": {
+        "enabled": true,
+        "threshold": -0.3
+      },
+      "vocffRule": {
+        "enabled": true,
+        "threshold": -0.02
+      },
+      "pceMin": 18,
+      "ffMin": 0,
+      "resistanceMin": 0
+    },
+    "盐": {
+      "championRule": {
+        "enabled": true,
+        "threshold": 0
+      },
+      "medianRule": {
+        "enabled": true,
+        "threshold": 0
+      },
+      "vocffRule": {
+        "enabled": true,
+        "threshold": 0
+      },
+      "pceMin": 18,
+      "ffMin": 0,
+      "resistanceMin": 0
+    },
+    "其他": {
+      "championRule": {
+        "enabled": true,
+        "threshold": -0.4
+      },
+      "medianRule": {
+        "enabled": true,
+        "threshold": -0.3
+      },
+      "vocffRule": {
+        "enabled": true,
+        "threshold": -0.02
+      },
+      "pceMin": 18,
+      "ffMin": 0,
+      "resistanceMin": 0
+    }
+  },
   "criteria": {
     "championRule": {
       "enabled": true,
