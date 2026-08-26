@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-26T08:22:58.781Z",
+  "updatedAt": "2026-08-26T08:45:56.777Z",
   "criteria": {
     "championRule": {
       "enabled": true,
@@ -11,7 +11,7 @@
     },
     "vocffRule": {
       "enabled": true,
-      "threshold": -0.2
+      "threshold": -0.02
     },
     "pceMin": 18,
     "ffMin": 0,
