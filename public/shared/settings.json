@@ -1,13 +1,13 @@
 {
-  "updatedAt": "2026-08-26T08:19:35.611Z",
+  "updatedAt": "2026-08-26T08:21:22.319Z",
   "criteria": {
     "championRule": {
       "enabled": true,
-      "threshold": 0
+      "threshold": -0.4
     },
     "medianRule": {
       "enabled": true,
-      "threshold": 0
+      "threshold": -0.3
     },
     "vocffRule": {
       "enabled": false,
