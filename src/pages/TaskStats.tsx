@@ -8,6 +8,45 @@ import { criteriaTextShort } from '../report/reportData';
 import { Card, Badge, Loading, PageHeader, EmptyState } from '../components/ui';
 import type { ScheduleItem } from '../types';
 
+/* ========== 合并后的工程师统计行（schedule 实时计算 + taskStats 快照补充） ========== */
+
+interface MergedStat {
+  name: string;
+  email: string;
+  batchCount: number;          // 基于 schedule.json 实时计算
+  totalTasks: number;           // 基于 schedule.json 实时计算
+  completedTasks: number;       // 基于 schedule.json 实时计算
+  overdueTasks: number;         // 基于 schedule.json 实时计算
+  avgCycleDays: number | null;  // 基于 schedule.json 实时计算
+  cycleStd: number | null;      // 基于 schedule.json 实时计算
+  avgPce: number | null;        // 来自 taskStats.json 快照（需本地样本才能计算）
+  medPce: number | null;        // 来自 taskStats.json 快照
+  maxPce: number | null;        // 来自 taskStats.json 快照
+  pceDeviceCount: number;       // 来自 taskStats.json 快照
+  pceFromCloud: boolean;        // PCE 数据是否来自云端快照
+}
+
+/* ========== 工作日计算 ========== */
+
+function isWeekend(date: Date): boolean {
+  const d = date.getDay();
+  return d === 0 || d === 6;
+}
+
+function workingDaysBetween(start: string, end: string): number {
+  if (!start || !end) return 0;
+  const s = new Date(start + 'T00:00:00');
+  const e = new Date(end + 'T00:00:00');
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return 0;
+  let count = 0;
+  const d = new Date(s);
+  while (d <= e) {
+    if (!isWeekend(d)) count++;
+    d.setDate(d.getDate() + 1);
+  }
+  return count;
+}
+
 /* ========== 页面组件 ========== */
 
 export default function TaskStats() {
@@ -17,14 +56,13 @@ export default function TaskStats() {
   const [cloudSchedules, setCloudSchedules] = useState<ScheduleItem[]>([]);
   const [loading, setLoading] = useState(true);
 
-  /* 仅从云端拉取数据：验证计划 + 任务统计（不使用本地 samples/schedules） */
+  /* 仅从云端拉取数据：schedule.json（工程师列表+计划数据）+ taskStats.json（PCE 快照） */
   useEffect(() => {
     if (!dbReady) return;
     let cancelled = false;
     void (async () => {
       setLoading(true);
       try {
-        // 并行拉取云端验证计划和任务统计
         const [scheduleRes, statsRes] = await Promise.all([
           fetchCloudSchedule(),
           fetchCloudTaskStats(),
@@ -32,14 +70,11 @@ export default function TaskStats() {
 
         if (cancelled) return;
 
-        // 验证计划：存入 cloudSchedules 用于逾期计算，同时合并到本地 DB（供其他页面使用）
         if (scheduleRes && scheduleRes.length > 0) {
           setCloudSchedules(scheduleRes as ScheduleItem[]);
-          // 合并到本地 DB（不影响 TaskStats 展示，仅供 Dashboard/Schedule 页面使用）
           try { await mergeSchedules(scheduleRes); } catch { /* 静默 */ }
         }
 
-        // 任务统计：仅使用云端预计算数据
         if (statsRes && statsRes.length > 0) {
           setCloudStats(statsRes);
         }
@@ -52,14 +87,87 @@ export default function TaskStats() {
     return () => { cancelled = true; };
   }, [dbReady]);
 
-  /* 统计数据：仅云端 */
-  const stats = useMemo(() => cloudStats ?? [], [cloudStats]);
+  const today = new Date().toISOString().slice(0, 10);
 
-  /* ---- 按周/按月切换（注意：所有 hooks 必须在任何提前 return 之前调用） ---- */
+  /* ---- 合并数据：schedule.json（工程师列表+非PCE指标）+ taskStats.json（PCE 快照） ---- */
+  const mergedStats = useMemo((): MergedStat[] => {
+    if (cloudSchedules.length === 0) return [];
+    const cloudStatsMap = new Map<string, CloudTaskStat>();
+    if (cloudStats) {
+      for (const cs of cloudStats) {
+        cloudStatsMap.set(cs.name, cs);
+      }
+    }
+
+    // 从 schedule.json 提取工程师 → 聚合数据
+    const engMap = new Map<string, {
+      name: string;
+      email: string;
+      batchSet: Set<string>;
+      totalTasks: number;
+      completedTasks: number;
+      overdueTasks: number;
+      cycleDays: number[];
+    }>();
+
+    for (const s of cloudSchedules) {
+      if (!engMap.has(s.engineer_name)) {
+        engMap.set(s.engineer_name, {
+          name: s.engineer_name,
+          email: s.engineer_email || '',
+          batchSet: new Set(),
+          totalTasks: 0,
+          completedTasks: 0,
+          overdueTasks: 0,
+          cycleDays: [],
+        });
+      }
+      const e = engMap.get(s.engineer_name)!;
+      e.totalTasks++;
+      if (s.status === 'completed') e.completedTasks++;
+      if (s.status !== 'completed' && s.report_deadline < today) e.overdueTasks++;
+      e.batchSet.add(s.batch_id || String(s.id));
+      const days = workingDaysBetween(s.start_date, s.report_deadline);
+      if (days > 0) e.cycleDays.push(days);
+    }
+
+    return Array.from(engMap.values())
+      .map((e) => {
+        const cloud = cloudStatsMap.get(e.name);
+        const avgCycle = e.cycleDays.length > 0
+          ? parseFloat((e.cycleDays.reduce((a, b) => a + b, 0) / e.cycleDays.length).toFixed(1))
+          : null;
+        const cycleStd = e.cycleDays.length > 1
+          ? parseFloat(Math.sqrt(
+              e.cycleDays.reduce((sum, d) => sum + Math.pow(d - (e.cycleDays.reduce((a, b) => a + b, 0) / e.cycleDays.length), 2), 0) / e.cycleDays.length,
+            ).toFixed(1))
+          : null;
+
+        return {
+          name: e.name,
+          email: e.email || (cloud?.email ?? ''),
+          batchCount: e.batchSet.size,
+          totalTasks: e.totalTasks,
+          completedTasks: e.completedTasks,
+          overdueTasks: e.overdueTasks,
+          avgCycleDays: avgCycle,
+          cycleStd,
+          // PCE 数据优先用 taskStats.json 快照（有本地样本计算），否则置空
+          avgPce: cloud?.avgPce ?? null,
+          medPce: cloud?.medPce ?? null,
+          maxPce: cloud?.maxPce ?? null,
+          pceDeviceCount: cloud?.pceDeviceCount ?? 0,
+          pceFromCloud: cloud != null,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+  }, [cloudSchedules, cloudStats, today]);
+
+  /* ---- 按周/按月切换 ---- */
   type ChartMode = 'week' | 'month';
   const [chartMode, setChartMode] = useState<ChartMode>('week');
 
-  /* 各工程师按时段批次数（基于云端验证计划的 start_date） */
+  /* 各工程师按时段批次数（基于 cloudSchedules） */
   const periodChartData = useMemo(() => {
     if (cloudSchedules.length === 0) return null;
     try {
@@ -67,20 +175,15 @@ export default function TaskStats() {
       if (engineers.length === 0) return null;
 
       function getPeriodKey(dateStr: string): { key: string; label: string } {
-        if (!dateStr) {
-          return { key: '__unknown__', label: '—' };
-        }
+        if (!dateStr) return { key: '__unknown__', label: '—' };
         const d = new Date(dateStr + 'T00:00:00');
-        if (Number.isNaN(d.getTime())) {
-          return { key: '__unknown__', label: '—' };
-        }
+        if (Number.isNaN(d.getTime())) return { key: '__unknown__', label: '—' };
         if (chartMode === 'month') {
           return {
             key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
             label: `${d.getMonth() + 1}月`,
           };
         }
-        // Week: get Monday date
         const day = d.getDay();
         const monday = new Date(d);
         monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
@@ -94,7 +197,6 @@ export default function TaskStats() {
         };
       }
 
-      // periodKey → { label, engineer → Set<batchId> }
       const periodMap = new Map<string, { label: string; engineers: Map<string, Set<string>> }>();
       for (const s of cloudSchedules) {
         if (!s.start_date) continue;
@@ -128,14 +230,14 @@ export default function TaskStats() {
 
   if (!dbReady || loading) return <Loading text="正在从云端拉取统计数据…" />;
 
-  if (stats.length === 0) {
+  if (mergedStats.length === 0) {
     return (
       <div>
         <PageHeader title="任务统计" description="工程师工作效率、质量、执行力与负荷统计" />
         <Card>
           <EmptyState
             icon="chart"
-            title="暂无云端统计数据"
+            title="暂无统计数据"
             description="请先在「验证计划」页添加验证计划并同步到云端，然后再回来查看统计"
           />
         </Card>
@@ -143,16 +245,11 @@ export default function TaskStats() {
     );
   }
 
-  /* 卡片数据统一从云端 stats 汇总 */
-  const totalBatches = stats.reduce((sum, s) => sum + s.batchCount, 0);
-  const totalTasks = stats.reduce((sum, s) => sum + s.totalTasks, 0);
-  const totalCompleted = stats.reduce((sum, s) => sum + s.completedTasks, 0);
+  /* 总览卡片数据 */
+  const totalBatches = mergedStats.reduce((sum, s) => sum + s.batchCount, 0);
+  const totalTasks = mergedStats.reduce((sum, s) => sum + s.totalTasks, 0);
+  const totalCompleted = mergedStats.reduce((sum, s) => sum + s.completedTasks, 0);
   const completionRate = totalTasks > 0 ? (totalCompleted / totalTasks) * 100 : 0;
-
-  /* 逾期数实时计算（基于云端验证计划 + 当前日期，不依赖云端快照） */
-  const today = new Date().toISOString().slice(0, 10);
-  const getRealOverdue = (engineerName: string) =>
-    cloudSchedules.filter((s) => s.engineer_name === engineerName && s.status !== 'completed' && s.report_deadline < today).length;
 
   /* 进度条色阶 */
   function progressColor(ratio: number): string {
@@ -167,12 +264,11 @@ export default function TaskStats() {
         title="任务统计"
         description="工程师工作效率、质量、执行力与负荷统计"
       />
-      {/* 数据来源标识 */}
       <div className="-mt-4 mb-4">
         <Badge tone="blue">云端数据</Badge>
       </div>
 
-      {/* 总览卡片（A1: 数据统一从 stats 汇总，内容居中，数字 Arial 36px） */}
+      {/* 总览卡片 */}
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="border-blue-100 bg-blue-50/50" bodyClassName="py-4 text-center">
           <div className="text-xs text-slate-500">工程师总数</div>
@@ -180,7 +276,7 @@ export default function TaskStats() {
             className="mt-1 font-bold text-slate-900"
             style={{ fontFamily: 'Arial, "Helvetica Neue", sans-serif', fontSize: '36px', lineHeight: 1.2 }}
           >
-            {stats.length}
+            {mergedStats.length}
           </div>
         </Card>
         <Card className="border-emerald-100 bg-emerald-50/50" bodyClassName="py-4 text-center">
@@ -212,7 +308,7 @@ export default function TaskStats() {
         </Card>
       </div>
 
-      {/* 详细统计表 */}
+      {/* 工程师统计明细 */}
       <Card title="工程师统计明细" bodyClassName="px-0 py-0">
         <div className="max-h-[600px] overflow-auto">
           <table className="data-table w-full">
@@ -229,7 +325,7 @@ export default function TaskStats() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {stats.map((st) => {
+              {mergedStats.map((st) => {
                 const avgCycle = st.avgCycleDays != null ? st.avgCycleDays.toFixed(1) : '—';
                 const cycleStd = st.cycleStd;
 
@@ -244,7 +340,6 @@ export default function TaskStats() {
 
                 return (
                   <tr key={st.name}>
-                    {/* 工程师 */}
                     <td>
                       <div className="font-medium text-slate-900">{st.name}</div>
                       {st.email && (
@@ -252,7 +347,6 @@ export default function TaskStats() {
                       )}
                     </td>
 
-                    {/* 验证批次数量（工作负荷） */}
                     <td className="text-center">
                       <span className="font-mono text-lg font-semibold text-slate-800">
                         {st.batchCount}
@@ -263,7 +357,6 @@ export default function TaskStats() {
                       )}
                     </td>
 
-                    {/* 验证周期（工作效率） */}
                     <td className="text-center">
                       <span className="font-mono text-sm font-semibold text-slate-800">
                         {avgCycle}
@@ -276,7 +369,6 @@ export default function TaskStats() {
                       )}
                     </td>
 
-                    {/* PCE平均效率（工作质量） */}
                     <td className="text-center">
                       <span className="font-mono text-sm font-semibold text-slate-800">
                         {avgPce}
@@ -299,9 +391,11 @@ export default function TaskStats() {
                               : '一般'}
                         </Badge>
                       )}
+                      {st.pceDeviceCount === 0 && st.batchCount > 0 && (
+                        <div className="text-[10px] text-amber-500">待同步</div>
+                      )}
                     </td>
 
-                    {/* PCE中位效率 */}
                     <td className="text-center">
                       <span className="font-mono text-sm text-slate-700">
                         {medPce}
@@ -309,7 +403,6 @@ export default function TaskStats() {
                       <span className="ml-1 text-xs text-slate-400">%</span>
                     </td>
 
-                    {/* PCE最高效率 */}
                     <td className="text-center">
                       <span className="font-mono text-sm text-slate-700">
                         {maxPce}
@@ -317,7 +410,6 @@ export default function TaskStats() {
                       <span className="ml-1 text-xs text-slate-400">%</span>
                     </td>
 
-                    {/* 报告及时性（执行力） */}
                     <td>
                       <div className="flex items-center gap-2">
                         <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
@@ -335,16 +427,12 @@ export default function TaskStats() {
                       </div>
                     </td>
 
-                    {/* 逾期任务（A3: 用当前日期实时计算） */}
                     <td className="text-center">
-                      {(() => {
-                        const realOverdue = getRealOverdue(st.name);
-                        return realOverdue > 0 ? (
-                          <Badge tone="red">{realOverdue} 项逾期</Badge>
-                        ) : (
-                          <span className="text-xs text-slate-400">无逾期</span>
-                        );
-                      })()}
+                      {st.overdueTasks > 0 ? (
+                        <Badge tone="red">{st.overdueTasks} 项逾期</Badge>
+                      ) : (
+                        <span className="text-xs text-slate-400">无逾期</span>
+                      )}
                     </td>
                   </tr>
                 );
@@ -357,7 +445,8 @@ export default function TaskStats() {
             <strong>验证周期</strong>：验证计划开始至报告截止的工作日天数（平均值），反映工作效率；
             <strong>PCE平均效率</strong>：该工程师负责批次中所有有效测试记录的PCE均值，反映工作质量（{criteriaTextShort(thresholds)}）；
             <strong>报告及时性</strong>：已完成任务占比，反映执行力；
-            <strong>验证批次</strong>：该工程师负责的验证批次数量，≥5个标记为高负荷。
+            <strong>验证批次</strong>：该工程师负责的验证批次数量，≥5个标记为高负荷；
+            <strong>待同步</strong>：表示该工程师的 PCE 效率数据尚未在云端 taskStats 快照中，需管理员在验证计划页同步。
           </p>
         </div>
       </Card>
@@ -383,21 +472,15 @@ export default function TaskStats() {
           const barCount = periodCount;
           const barGap = 3;
           const barW = barCount > 0 ? Math.max(4, (groupW * 0.7 - barGap * (barCount - 1)) / barCount) : 8;
-          if (!Number.isFinite(CHART_W) || !Number.isFinite(CHART_H)) {
-            console.warn('[TaskStats] invalid chart dimensions', { CHART_W, CHART_H });
-            return null;
-          }
+          if (!Number.isFinite(CHART_W) || !Number.isFinite(CHART_H)) return null;
           return (
             <Card title="验证批次数对比" className="mt-4" bodyClassName="pb-2">
-              {/* 切换按钮 */}
               <div className="mb-3 flex items-center gap-1">
                 <button
                   type="button"
                   onClick={() => setChartMode('week')}
                   className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                    chartMode === 'week'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    chartMode === 'week' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
                   按周
@@ -406,9 +489,7 @@ export default function TaskStats() {
                   type="button"
                   onClick={() => setChartMode('month')}
                   className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                    chartMode === 'month'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    chartMode === 'month' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
                   按月
@@ -417,23 +498,17 @@ export default function TaskStats() {
 
               <div className="overflow-auto scroll-shadow-x">
                 <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} width={CHART_W} height={CHART_H} style={{ minWidth: '100%' }} fontFamily="Arial, 'Microsoft YaHei', sans-serif">
-                  {/* Y-axis grid lines */}
                   {Array.from({ length: yTicksSafe + 1 }, (_, i) => {
                     const y = MARGIN.top + PLOT_H - (i / yTicksSafe) * PLOT_H;
                     return (
                       <g key={i}>
                         <line x1={MARGIN.left} y1={y} x2={MARGIN.left + PLOT_W} y2={y} stroke="#E2E8F0" strokeWidth={1} />
-                        <text x={MARGIN.left - 6} y={y + 4} textAnchor="end" fill="#94A3B8" fontSize={11}>
-                          {i}
-                        </text>
+                        <text x={MARGIN.left - 6} y={y + 4} textAnchor="end" fill="#94A3B8" fontSize={11}>{i}</text>
                       </g>
                     );
                   })}
-
-                  {/* X-axis line */}
                   <line x1={MARGIN.left} y1={MARGIN.top + PLOT_H} x2={MARGIN.left + PLOT_W} y2={MARGIN.top + PLOT_H} stroke="#CBD5E1" strokeWidth={1} />
 
-                  {/* Bars */}
                   {engineers.map((eng, ei) => {
                     const gx = MARGIN.left + ei * groupW + groupW * 0.15;
                     return periods.map((p, pi) => {
@@ -446,49 +521,20 @@ export default function TaskStats() {
                       if (!Number.isFinite(bx) || !Number.isFinite(by) || !Number.isFinite(barW) || !Number.isFinite(barH)) return null;
                       return (
                         <g key={`${eng}-${p.key}`}>
-                          <rect
-                            x={bx}
-                            y={by}
-                            width={barW}
-                            height={barH}
-                            rx={2}
-                            fill={COLORS[pi % COLORS.length]}
-                            opacity={0.88}
-                          />
-                          <text
-                            x={bx + barW / 2}
-                            y={by - 4}
-                            textAnchor="middle"
-                            fill="#475569"
-                            fontSize={10}
-                            fontWeight={600}
-                          >
-                            {val}
-                          </text>
+                          <rect x={bx} y={by} width={barW} height={barH} rx={2} fill={COLORS[pi % COLORS.length]} opacity={0.88} />
+                          <text x={bx + barW / 2} y={by - 4} textAnchor="middle" fill="#475569" fontSize={10} fontWeight={600}>{val}</text>
                         </g>
                       );
                     });
                   })}
 
-                  {/* X-axis engineer labels */}
                   {engineers.map((eng, ei) => {
                     const cx = MARGIN.left + ei * groupW + groupW / 2;
                     return (
-                      <text
-                        key={eng}
-                        x={cx}
-                        y={MARGIN.top + PLOT_H + 20}
-                        textAnchor="middle"
-                        fill="#334155"
-                        fontSize={12}
-                        fontWeight={600}
-                      >
-                        {eng}
-                      </text>
+                      <text key={eng} x={cx} y={MARGIN.top + PLOT_H + 20} textAnchor="middle" fill="#334155" fontSize={12} fontWeight={600}>{eng}</text>
                     );
                   })}
 
-                  {/* Legend */}
                   <g transform={`translate(${MARGIN.left}, ${MARGIN.top + PLOT_H + 42})`}>
                     {periods.map((p, pi) => {
                       const lx = pi * 80;
@@ -496,9 +542,7 @@ export default function TaskStats() {
                       return (
                         <g key={p.key} transform={`translate(${lx}, 0)`}>
                           <rect x={0} y={0} width={10} height={10} rx={2} fill={COLORS[pi % COLORS.length]} opacity={0.88} />
-                          <text x={14} y={9} fill="#64748B" fontSize={10}>
-                            {wkLabel}
-                          </text>
+                          <text x={14} y={9} fill="#64748B" fontSize={10}>{wkLabel}</text>
                         </g>
                       );
                     })}
@@ -513,11 +557,11 @@ export default function TaskStats() {
         }
       })()}
 
-      {/* 效率分布图 */}
-      {stats.length > 0 && (
-        <Card title="效率对比" className="mt-4" bodyClassName="pb-2">
+      {/* 效率对比（基于 mergedStats，PCE 来自 taskStats.json 快照） */}
+      <Card title="效率对比" className="mt-4" bodyClassName="pb-2">
+        {mergedStats.filter((st) => st.avgPce != null).length > 0 ? (
           <div className="space-y-3">
-            {stats
+            {mergedStats
               .filter((st) => st.avgPce != null)
               .map((st) => {
                 const avgPce = st.avgPce!;
@@ -547,11 +591,15 @@ export default function TaskStats() {
                 );
               })}
           </div>
-          <div className="mt-3 border-t border-slate-50 pt-3 text-center text-[10px] text-slate-400">
-            {criteriaTextShort(thresholds)}
-          </div>
-        </Card>
-      )}
+        ) : (
+          <p className="py-6 text-center text-sm text-slate-400">
+            暂无 PCE 效率数据，请管理员在「验证计划」页同步云端数据以生成 PCE 统计快照
+          </p>
+        )}
+        <div className="mt-3 border-t border-slate-50 pt-3 text-center text-[10px] text-slate-400">
+          {criteriaTextShort(thresholds)}
+        </div>
+      </Card>
     </div>
   );
 }
