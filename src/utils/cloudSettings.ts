@@ -1,5 +1,8 @@
 import {
   CRITERIA_STORAGE_KEY,
+  CRITERIA_SETS_STORAGE_KEY,
+  loadCriteriaSets,
+  saveCriteriaSets,
   sanitizeThresholds,
   type CriteriaThresholds,
 } from '../report/reportData';
@@ -91,8 +94,10 @@ export function saveEngineersConfig(list: EngineerEntry[]): void {
 
 /** 云端设置内容 */
 export interface CloudSettings {
-  /** 统计口径（缺失表示不共享） */
+  /** 统计口径（旧版单套字段，向后兼容；缺失表示不共享） */
   criteria?: CriteriaThresholds;
+  /** 多套判定标准（名称 → 口径；缺失表示不共享） */
+  criteriaSets?: Record<string, CriteriaThresholds>;
   /** 默认收件人（缺失表示不共享；[] 表示共享空列表） */
   mailRecipients?: string[];
   /** 管理员工程师姓名列表（缺失表示不共享；[]=全员管理员，即无权限限制） */
@@ -208,6 +213,13 @@ export function parseCloudSettings(raw: string): CloudSettings | null {
     if (p.criteria !== undefined) {
       out.criteria = sanitizeThresholds(p.criteria as Partial<CriteriaThresholds>);
     }
+    if (p.criteriaSets !== undefined && p.criteriaSets !== null && typeof p.criteriaSets === 'object' && !Array.isArray(p.criteriaSets)) {
+      const sets: Record<string, CriteriaThresholds> = {};
+      for (const [name, val] of Object.entries(p.criteriaSets as Record<string, unknown>)) {
+        if (name.trim()) sets[name.trim()] = sanitizeThresholds(val as Partial<CriteriaThresholds>);
+      }
+      if (Object.keys(sets).length > 0) out.criteriaSets = sets;
+    }
     if (p.mailRecipients !== undefined) {
       out.mailRecipients = Array.isArray(p.mailRecipients)
         ? p.mailRecipients
@@ -246,6 +258,8 @@ export function parseCloudSettings(raw: string): CloudSettings | null {
 export function collectCloudPayload(cfg: CloudConfig): CloudSettings {
   const payload: CloudSettings = { updatedAt: new Date().toISOString() };
   if (cfg.shareCriteria) {
+    // 多套判定标准（主数据）；旧版单套字段保留当前生效套（向后兼容）
+    payload.criteriaSets = loadCriteriaSets();
     try {
       payload.criteria = sanitizeThresholds(JSON.parse(localStorage.getItem(CRITERIA_STORAGE_KEY) ?? 'null'));
     } catch {
@@ -334,13 +348,24 @@ export function applyCloudSettings(cloud: CloudSettings): { criteria: boolean; r
   let recipientsApplied = false;
   let rolesApplied = false;
   let engineersApplied = false;
-  if (cloud.criteria) {
+  if (cloud.criteriaSets) {
+    saveCriteriaSets(cloud.criteriaSets);
+    criteriaApplied = true;
+  } else if (cloud.criteria) {
+    // 旧版云端单套口径：迁移为多套（沿用现有套名，每套均设为该值，保持团队一致）
+    const existing = loadCriteriaSets();
+    const migrated: Record<string, CriteriaThresholds> = {};
+    for (const name of Object.keys(existing)) {
+      migrated[name] = cloud.criteria!;
+    }
+    if (Object.keys(migrated).length === 0) migrated['默认'] = cloud.criteria!;
+    saveCriteriaSets(migrated);
     try {
       localStorage.setItem(CRITERIA_STORAGE_KEY, JSON.stringify(cloud.criteria));
-      criteriaApplied = true;
     } catch {
       // localStorage 不可用
     }
+    criteriaApplied = true;
   }
   if (cloud.mailRecipients) {
     saveMailRecipients(cloud.mailRecipients);
@@ -420,7 +445,7 @@ export async function syncSettingsToCloud(): Promise<SyncResult> {
   const cfg = loadCloudConfig();
   if (!cfg.token) return { ok: false, message: 'not-configured' };
   const payload = collectCloudPayload(cfg);
-  if (!payload.criteria && !payload.mailRecipients && !payload.adminNames && (!payload.engineers || payload.engineers.length === 0)) {
+  if (!payload.criteria && !payload.criteriaSets && !payload.mailRecipients && !payload.adminNames && (!payload.engineers || payload.engineers.length === 0)) {
     return { ok: false, message: 'nothing' };
   }
   try {

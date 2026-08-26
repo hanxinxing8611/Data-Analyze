@@ -10,16 +10,13 @@ import {
   batchLabelOf,
   buildOverviewSummary,
   buildReportData,
-  criteriaText,
   criteriaTextShort,
   generateDiscussionDraft,
   isValidDevice,
-  type CriteriaThresholds,
   type ReportData,
 } from '../report/reportData';
 import { fmt } from '../utils/statistics';
 import { loadMailRecipients } from '../utils/mailRecipients';
-import { loadCloudConfig, syncSettingsToCloud } from '../utils/cloudSettings';
 import { getCurrentEngineer, getCurrentEngineerEmail } from '../utils/permissions';
 import { exportReportExcel, exportReportExcelBlob, exportReportPdf, buildReportFileName, type ChartImage } from '../report/exporters';
 import type { BatchSummary, ReportMetaInput, ReportMetadata, SampleRecord } from '../types';
@@ -353,262 +350,57 @@ function renderEmailHtml(blocks: EmailBlock[], charts: ChartImage[], overview?: 
   return `<div style="font-family:${EMAIL_FONT_STACK};max-width:760px;">${parts.join('')}</div>`;
 }
 
-/* ================= 统计口径与优秀判定设置 ================= */
+/* ================= 判定标准选择（只读，由系统设置维护） ================= */
 
-/** 数值输入框状态 */
-interface NumberField {
-  value: string;
-  error: string;
-}
+function CriteriaSelectorCard() {
+  const { thresholds, activeName, criteriaSets, setActiveCriteria } = useCriteria();
+  const names = Object.keys(criteriaSets);
 
-function emptyField(n: number): NumberField {
-  return { value: String(n), error: '' };
-}
-
-/** 判定规则表单行配置 */
-const RULE_ROWS = [
-  { key: 'champion', label: 'PCE冠军 Δ≥' },
-  { key: 'median', label: 'PCE中位 Δ≥' },
-  { key: 'vocff', label: 'VOC*FF平均 Δ≥' },
-] as const;
-
-type RuleKey = (typeof RULE_ROWS)[number]['key'];
-
-function CriteriaCard() {
-  const { thresholds, saveThresholds, resetThresholds } = useCriteria();
-  const [pceMin, setPceMin] = useState<NumberField>(() => emptyField(thresholds.pceMin));
-  const [ffMin, setFfMin] = useState<NumberField>(() => emptyField(thresholds.ffMin));
-  const [resistanceMin, setResistanceMin] = useState<NumberField>(
-    () => emptyField(thresholds.resistanceMin),
-  );
-  const [ruleOn, setRuleOn] = useState<Record<RuleKey, boolean>>({
-    champion: thresholds.championRule.enabled,
-    median: thresholds.medianRule.enabled,
-    vocff: thresholds.vocffRule.enabled,
-  });
-  const [ruleTh, setRuleTh] = useState<Record<RuleKey, NumberField>>({
-    champion: emptyField(thresholds.championRule.threshold),
-    median: emptyField(thresholds.medianRule.threshold),
-    vocff: emptyField(thresholds.vocffRule.threshold),
-  });
-  const [ruleError, setRuleError] = useState('');
-  const [saved, setSaved] = useState(false);
-  /** 云端同步结果提示（保存后显示） */
-  const [cloudMsg, setCloudMsg] = useState('');
-
-  /** 外部更新（云端拉取应用）时同步表单显示 */
-  useEffect(() => {
-    setPceMin(emptyField(thresholds.pceMin));
-    setFfMin(emptyField(thresholds.ffMin));
-    setResistanceMin(emptyField(thresholds.resistanceMin));
-    setRuleOn({
-      champion: thresholds.championRule.enabled,
-      median: thresholds.medianRule.enabled,
-      vocff: thresholds.vocffRule.enabled,
-    });
-    setRuleTh({
-      champion: emptyField(thresholds.championRule.threshold),
-      median: emptyField(thresholds.medianRule.threshold),
-      vocff: emptyField(thresholds.vocffRule.threshold),
-    });
+  /** 当前套的规则摘要（勾选项 + 阈值） */
+  const ruleSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (thresholds.championRule.enabled) parts.push(`PCE冠军 Δ≥${thresholds.championRule.threshold}`);
+    if (thresholds.medianRule.enabled) parts.push(`PCE中位 Δ≥${thresholds.medianRule.threshold}`);
+    if (thresholds.vocffRule.enabled) parts.push(`VOC*FF平均 Δ≥${thresholds.vocffRule.threshold}`);
+    return parts.join(' 且 ');
   }, [thresholds]);
-
-  const dirty =
-    pceMin.value !== String(thresholds.pceMin) ||
-    ffMin.value !== String(thresholds.ffMin) ||
-    resistanceMin.value !== String(thresholds.resistanceMin) ||
-    RULE_ROWS.some(
-      (r) =>
-        ruleOn[r.key] !== thresholds[`${r.key}Rule`].enabled ||
-        ruleTh[r.key].value !== String(thresholds[`${r.key}Rule`].threshold),
-    );
-
-  const validate = (f: NumberField, min: number, max: number, label: string): NumberField => {
-    const n = parseFloat(f.value);
-    if (f.value.trim() === '' || isNaN(n)) return { ...f, error: `${label}须为数值` };
-    if (n < min || n > max) return { ...f, error: `取值范围 ${min} ~ ${max}` };
-    return { value: f.value, error: '' };
-  };
-
-  const handleSave = () => {
-    const pc = validate(pceMin, 0, 100, 'PCE 下限');
-    const ff = validate(ffMin, 0, 1, 'FF 下限');
-    const rs = validate(resistanceMin, 0, 1e9, '电阻下限');
-    setPceMin(pc);
-    setFfMin(ff);
-    setResistanceMin(rs);
-    const ths = { ...ruleTh };
-    for (const r of RULE_ROWS) {
-      ths[r.key] = validate(ruleTh[r.key], -100, 100, 'Δ 阈值');
-    }
-    setRuleTh(ths);
-    if (pc.error || ff.error || rs.error || RULE_ROWS.some((r) => ths[r.key].error)) return;
-    if (!RULE_ROWS.some((r) => ruleOn[r.key])) {
-      setRuleError('优秀判定至少启用一项条件（可单选或多选）');
-      return;
-    }
-    setRuleError('');
-
-    const next: CriteriaThresholds = {
-      championRule: { enabled: ruleOn.champion, threshold: parseFloat(ths.champion.value) },
-      medianRule: { enabled: ruleOn.median, threshold: parseFloat(ths.median.value) },
-      vocffRule: { enabled: ruleOn.vocff, threshold: parseFloat(ths.vocff.value) },
-      pceMin: parseFloat(pc.value),
-      ffMin: parseFloat(ff.value),
-      resistanceMin: parseFloat(rs.value),
-    };
-    // 保存后全局口径状态即时更新：报告数据、总览、判定与预览全部自动重算
-    saveThresholds(next);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
-
-    // 已配置云端共享时推送（管理员保存即全团队生效）
-    const cfg = loadCloudConfig();
-    if (cfg.token) {
-      setCloudMsg('正在同步云端…');
-      void syncSettingsToCloud().then((r) => {
-        if (r.ok) {
-          setCloudMsg('已同步云端，其他工程师下次打开页面即生效');
-        } else if (r.message === 'nothing') {
-          setCloudMsg('已保存（本机）——云端共享未勾选任何项目');
-        } else {
-          setCloudMsg(`已保存（本机），云端同步失败：${r.message}`);
-        }
-        setTimeout(() => setCloudMsg(''), 6000);
-      });
-    }
-  };
-
-  const handleReset = () => {
-    resetThresholds();
-    setRuleError('');
-  };
-
-  const fieldCls = (err: string) =>
-    `w-20 rounded-lg border px-2.5 py-1.5 text-right font-mono text-sm outline-none transition-colors ${
-      err ? 'border-red-300 bg-red-50 focus:border-red-400' : 'border-slate-300 focus:border-blue-500'
-    }`;
 
   return (
     <Card
-      title="统计口径与优秀判定"
-      extra={<span className="text-[11px] text-slate-400">保存后自动重算</span>}
+      title="判定标准"
+      extra={<span className="text-[11px] text-slate-400">选择后自动重算</span>}
     >
-      <div className="space-y-4">
-        {/* 有效测试记录判定阈值 */}
-        <div className="rounded-lg border border-slate-100 bg-slate-50/60 px-4 py-3">
-          <div className="mb-2 text-sm font-medium text-slate-700">有效测试记录判定</div>
-          <p className="mb-3 text-[11px] leading-4 text-slate-400">
-            反扫记录需同时满足以下条件才算有效测试记录
-          </p>
-          <div className="grid grid-cols-1 gap-2.5">
-            <div className="flex items-center gap-2">
-              <span className="w-36 shrink-0 text-xs text-slate-500">PCE 下限（%）</span>
-              <input
-                type="number"
-                step="any"
-                value={pceMin.value}
-                onChange={(e) => setPceMin({ value: e.target.value, error: '' })}
-                className={`${fieldCls(pceMin.error)} flex-1`}
-              />
-              {pceMin.error && <span className="text-xs text-red-500">{pceMin.error}</span>}
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-36 shrink-0 text-xs text-slate-500">FF 下限</span>
-              <input
-                type="number"
-                step="any"
-                value={ffMin.value}
-                onChange={(e) => setFfMin({ value: e.target.value, error: '' })}
-                className={`${fieldCls(ffMin.error)} flex-1`}
-              />
-              {ffMin.error && <span className="text-xs text-red-500">{ffMin.error}</span>}
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-36 shrink-0 text-xs text-slate-500">电阻下限（Ω，Rs/Rsh &gt;）</span>
-              <input
-                type="number"
-                step="any"
-                value={resistanceMin.value}
-                onChange={(e) => setResistanceMin({ value: e.target.value, error: '' })}
-                className={`${fieldCls(resistanceMin.error)} flex-1`}
-              />
-              {resistanceMin.error && (
-                <span className="text-xs text-red-500">{resistanceMin.error}</span>
-              )}
-            </div>
-          </div>
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {names.map((name) => (
+            <button
+              key={name}
+              type="button"
+              onClick={() => setActiveCriteria(name)}
+              className={`rounded-lg border px-4 py-1.5 text-sm font-medium transition-colors ${
+                activeName === name
+                  ? 'border-blue-500 bg-blue-50 text-blue-600 shadow-sm'
+                  : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700'
+              }`}
+            >
+              {name}
+            </button>
+          ))}
         </div>
 
-        {/* 优秀批次判定规则（可单选/多选，启用项须同时满足） */}
-        <div className="rounded-lg border border-slate-100 bg-slate-50/60 px-4 py-3">
-          <div className="mb-2 text-sm font-medium text-slate-700">优秀批次判定</div>
-          <p className="mb-3 text-[11px] leading-4 text-slate-400">
-            对比批次相对 Baseline 的差值 Δ 满足全部启用条件即「优秀」，否则「不合格」；可单选或多选
+        {/* 当前标准信息（只读） */}
+        <div className="rounded-lg border border-slate-100 bg-slate-50/60 px-4 py-3 text-xs leading-6 text-slate-500">
+          <div className="mb-1 text-sm font-medium text-slate-700">
+            当前使用：「{activeName || '（未选择）'}」
+          </div>
+          <p>
+            有效测试记录 = 反扫 且 PCE≥{thresholds.pceMin}%、FF≥{thresholds.ffMin}
+            {thresholds.resistanceMin > 0 ? `、Rs/Rsh>${thresholds.resistanceMin}Ω` : ''}；
           </p>
-          <div className="space-y-2.5">
-            {RULE_ROWS.map((r) => (
-              <div key={r.key} className="flex items-center gap-2">
-                <label className="flex flex-1 cursor-pointer items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={ruleOn[r.key]}
-                    onChange={(e) => {
-                      setRuleOn({ ...ruleOn, [r.key]: e.target.checked });
-                      setRuleError('');
-                    }}
-                    className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600"
-                  />
-                  <span className="text-xs text-slate-600">{r.label}</span>
-                </label>
-                <input
-                  type="number"
-                  step="any"
-                  disabled={!ruleOn[r.key]}
-                  value={ruleTh[r.key].value}
-                  onChange={(e) =>
-                    setRuleTh({ ...ruleTh, [r.key]: { value: e.target.value, error: '' } })
-                  }
-                  className={`${fieldCls(ruleTh[r.key].error)} w-20 ${
-                    ruleOn[r.key] ? '' : 'cursor-not-allowed bg-slate-100 text-slate-400'
-                  }`}
-                />
-                {ruleTh[r.key].error && (
-                  <span className="text-xs text-red-500">{ruleTh[r.key].error}</span>
-                )}
-              </div>
-            ))}
-          </div>
-          {ruleError && <p className="mt-2 text-xs text-red-500">{ruleError}</p>}
-        </div>
-
-        <div className="flex items-center justify-between border-t border-slate-100 pt-3">
-          <div className="min-w-0">
-            <p className="truncate text-xs text-slate-400" title={criteriaText(thresholds)}>
-              {saved ? (
-                <span className="text-emerald-600">已保存，报告数据已自动重算</span>
-              ) : dirty ? (
-                <span className="text-amber-600">有未保存的修改</span>
-              ) : (
-                <span title={criteriaText(thresholds)}>{criteriaText(thresholds)}</span>
-              )}
-            </p>
-            {cloudMsg && (
-              <p
-                className={`mt-0.5 text-xs ${
-                  cloudMsg.includes('失败') ? 'text-red-500' : 'text-blue-600'
-                }`}
-              >
-                {cloudMsg}
-              </p>
-            )}
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button variant="secondary" onClick={handleReset}>
-              恢复默认
-            </Button>
-            <Button onClick={handleSave}>保存口径</Button>
-          </div>
+          <p>优秀判定：{ruleSummary || '（未启用任何规则）'}；不满足则判「不合格」。</p>
+          <p className="mt-1 text-[11px] text-slate-400">
+            判定标准由管理员在「系统设置」中增改删并云端共享，工程师在此仅可选择与查看。
+          </p>
         </div>
       </div>
     </Card>
@@ -1001,7 +793,7 @@ export default function ReportEditor() {
           )}
         </div>
         <p className="mt-2 text-[11px] text-slate-400">
-          标签显示「有效 / 反扫总数」（符合口径反扫数 / 反扫总数）；口径可在下方「统计口径与优秀判定」中调整
+          标签显示「有效 / 反扫总数」（符合口径反扫数 / 反扫总数）；判定标准可在下方选择，或由管理员在「系统设置」中调整
         </p>
       </Card>
 
@@ -1017,8 +809,8 @@ export default function ReportEditor() {
         </div>
       </div>
 
-      {/* 统计口径与优秀判定（保存后数据自动重算、报告自动更新） */}
-      <CriteriaCard />
+      {/* 判定标准选择（选择后数据自动重算、报告自动更新） */}
+      <CriteriaSelectorCard />
 
       {/* 报告信息 */}
       <Card title="报告信息（手工录入）" bodyClassName="px-5 py-4 space-y-4">

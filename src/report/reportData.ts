@@ -39,6 +39,12 @@ export const DEFAULT_THRESHOLDS: CriteriaThresholds = {
 
 /** localStorage 持久化键 */
 export const CRITERIA_STORAGE_KEY = 'dv-criteria-thresholds';
+/** 多套判定标准持久化键（名称 → 口径配置） */
+export const CRITERIA_SETS_STORAGE_KEY = 'dv-criteria-sets';
+/** 当前生效的判定标准名称持久化键 */
+export const CRITERIA_ACTIVE_KEY = 'dv-criteria-active';
+/** 默认三套判定标准名称 */
+export const DEFAULT_CRITERIA_NAMES = ['微晶', '盐', '其他'] as const;
 
 /** 口径字段防御性校验（非法/缺失回退默认值），localStorage 与云端解析共用；
  *  兼容旧版 verdictMode/verdictThreshold 单阈值配置（自动迁移为规则形式） */
@@ -99,6 +105,71 @@ export function loadThresholds(): CriteriaThresholds {
     return sanitizeThresholds(JSON.parse(raw) as Partial<CriteriaThresholds>);
   } catch {
     return { ...DEFAULT_THRESHOLDS };
+  }
+}
+
+/** 从 localStorage 读取全部判定标准（名称 → 口径）。
+ *  首次使用（无多套数据）时：以旧版单套口径（如有）或默认值初始化三套默认标准 */
+export function loadCriteriaSets(): Record<string, CriteriaThresholds> {
+  try {
+    const raw = localStorage.getItem(CRITERIA_SETS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const out: Record<string, CriteriaThresholds> = {};
+        for (const [name, val] of Object.entries(parsed)) {
+          if (name.trim()) out[name.trim()] = sanitizeThresholds(val as Partial<CriteriaThresholds>);
+        }
+        if (Object.keys(out).length > 0) return out;
+      }
+    }
+  } catch {
+    // 非法内容走下方初始化
+  }
+  // 迁移初始化：旧版单套口径存在则三套共用其值，否则用默认值
+  const legacy = (() => {
+    try {
+      const raw = localStorage.getItem(CRITERIA_STORAGE_KEY);
+      return raw ? sanitizeThresholds(JSON.parse(raw) as Partial<CriteriaThresholds>) : null;
+    } catch {
+      return null;
+    }
+  })();
+  const init: Record<string, CriteriaThresholds> = {};
+  for (const name of DEFAULT_CRITERIA_NAMES) {
+    init[name] = legacy ? { ...legacy } : { ...DEFAULT_THRESHOLDS };
+  }
+  return init;
+}
+
+/** 保存全部判定标准到 localStorage */
+export function saveCriteriaSets(sets: Record<string, CriteriaThresholds>): void {
+  try {
+    localStorage.setItem(CRITERIA_SETS_STORAGE_KEY, JSON.stringify(sets));
+  } catch {
+    // localStorage 不可用时仅保留内存态
+  }
+}
+
+/** 读取当前生效的判定标准名称（非法/缺失回退第一套） */
+export function loadActiveCriteriaName(sets?: Record<string, CriteriaThresholds>): string {
+  const all = sets ?? loadCriteriaSets();
+  try {
+    const name = localStorage.getItem(CRITERIA_ACTIVE_KEY);
+    if (name && all[name]) return name;
+  } catch {
+    // 忽略
+  }
+  const names = Object.keys(all);
+  return names.length > 0 ? names[0] : DEFAULT_CRITERIA_NAMES[0];
+}
+
+/** 保存当前生效的判定标准名称 */
+export function saveActiveCriteriaName(name: string): void {
+  try {
+    localStorage.setItem(CRITERIA_ACTIVE_KEY, name);
+  } catch {
+    // 忽略
   }
 }
 

@@ -3,6 +3,7 @@ import { useCriteria } from '../store/CriteriaContext';
 import { Button, Card, PageHeader } from '../components/ui';
 import Icon from '../components/layout/Icon';
 import { usePermission, notifyPermissionChanged } from '../utils/permissions';
+import { criteriaText, criteriaTextShort, DEFAULT_THRESHOLDS, type CriteriaThresholds } from '../report/reportData';
 import {
   isValidEmail,
   loadMailRecipients,
@@ -237,10 +238,367 @@ function MailRecipientsCard() {
   );
 }
 
+/* ================= 判定标准管理（多套，管理员） ================= */
+
+/** 数值输入框状态 */
+interface NumberField {
+  value: string;
+  error: string;
+}
+
+function emptyField(n: number): NumberField {
+  return { value: String(n), error: '' };
+}
+
+/** 判定规则表单行配置 */
+const RULE_ROWS = [
+  { key: 'champion', label: 'PCE冠军 Δ≥' },
+  { key: 'median', label: 'PCE中位 Δ≥' },
+  { key: 'vocff', label: 'VOC*FF平均 Δ≥' },
+] as const;
+
+type RuleKey = (typeof RULE_ROWS)[number]['key'];
+
+function CriteriaManagerCard() {
+  const { canWrite } = usePermission();
+  const { criteriaSets, activeName, saveCriteriaSet, deleteCriteriaSet } = useCriteria();
+
+  /* 正在编辑的套名（默认进入当前生效套） */
+  const [editing, setEditing] = useState<string>(activeName);
+  const current = criteriaSets[editing];
+
+  const [pceMin, setPceMin] = useState<NumberField>(() => emptyField(current?.pceMin ?? DEFAULT_THRESHOLDS.pceMin));
+  const [ffMin, setFfMin] = useState<NumberField>(() => emptyField(current?.ffMin ?? DEFAULT_THRESHOLDS.ffMin));
+  const [resistanceMin, setResistanceMin] = useState<NumberField>(
+    () => emptyField(current?.resistanceMin ?? DEFAULT_THRESHOLDS.resistanceMin),
+  );
+  const [ruleOn, setRuleOn] = useState<Record<RuleKey, boolean>>({
+    champion: current?.championRule.enabled ?? true,
+    median: current?.medianRule.enabled ?? true,
+    vocff: current?.vocffRule.enabled ?? false,
+  });
+  const [ruleTh, setRuleTh] = useState<Record<RuleKey, NumberField>>({
+    champion: emptyField(current?.championRule.threshold ?? 0),
+    median: emptyField(current?.medianRule.threshold ?? 0),
+    vocff: emptyField(current?.vocffRule.threshold ?? 0),
+  });
+  const [ruleError, setRuleError] = useState('');
+  const [newName, setNewName] = useState('');
+  const [nameError, setNameError] = useState('');
+  const [msg, setMsg] = useState<{ tone: 'success' | 'error' | 'info'; text: string } | null>(null);
+
+  /* 切换编辑套时重置表单 */
+  useEffect(() => {
+    const t = criteriaSets[editing] ?? DEFAULT_THRESHOLDS;
+    setPceMin(emptyField(t.pceMin));
+    setFfMin(emptyField(t.ffMin));
+    setResistanceMin(emptyField(t.resistanceMin));
+    setRuleOn({ champion: t.championRule.enabled, median: t.medianRule.enabled, vocff: t.vocffRule.enabled });
+    setRuleTh({
+      champion: emptyField(t.championRule.threshold),
+      median: emptyField(t.medianRule.threshold),
+      vocff: emptyField(t.vocffRule.threshold),
+    });
+    setRuleError('');
+  }, [editing, criteriaSets]);
+
+  const dirty =
+    !!current &&
+    (pceMin.value !== String(current.pceMin) ||
+      ffMin.value !== String(current.ffMin) ||
+      resistanceMin.value !== String(current.resistanceMin) ||
+      RULE_ROWS.some(
+        (r) =>
+          ruleOn[r.key] !== current[`${r.key}Rule`].enabled ||
+          ruleTh[r.key].value !== String(current[`${r.key}Rule`].threshold),
+      ));
+
+  const validate = (f: NumberField, min: number, max: number, label: string): NumberField => {
+    const n = parseFloat(f.value);
+    if (f.value.trim() === '' || isNaN(n)) return { ...f, error: `${label}须为数值` };
+    if (n < min || n > max) return { ...f, error: `取值范围 ${min} ~ ${max}` };
+    return { value: f.value, error: '' };
+  };
+
+  /** 保存当前编辑套（含云端同步） */
+  const handleSave = () => {
+    if (!current) return;
+    const pc = validate(pceMin, 0, 100, 'PCE 下限');
+    const ff = validate(ffMin, 0, 1, 'FF 下限');
+    const rs = validate(resistanceMin, 0, 1e9, '电阻下限');
+    setPceMin(pc);
+    setFfMin(ff);
+    setResistanceMin(rs);
+    const ths = { ...ruleTh };
+    for (const r of RULE_ROWS) ths[r.key] = validate(ruleTh[r.key], -100, 100, 'Δ 阈值');
+    setRuleTh(ths);
+    if (pc.error || ff.error || rs.error || RULE_ROWS.some((r) => ths[r.key].error)) return;
+    if (!RULE_ROWS.some((r) => ruleOn[r.key])) {
+      setRuleError('优秀判定至少启用一项条件（可单选或多选）');
+      return;
+    }
+    setRuleError('');
+
+    const next: CriteriaThresholds = {
+      championRule: { enabled: ruleOn.champion, threshold: parseFloat(ths.champion.value) },
+      medianRule: { enabled: ruleOn.median, threshold: parseFloat(ths.median.value) },
+      vocffRule: { enabled: ruleOn.vocff, threshold: parseFloat(ths.vocff.value) },
+      pceMin: parseFloat(pc.value),
+      ffMin: parseFloat(ff.value),
+      resistanceMin: parseFloat(rs.value),
+    };
+    saveCriteriaSet(editing, next);
+
+    const cfg = loadCloudConfig();
+    if (cfg.token) {
+      setMsg({ tone: 'info', text: '正在同步云端…' });
+      void syncSettingsToCloud().then((r) => {
+        setMsg(
+          r.ok
+            ? { tone: 'success', text: '已保存并同步云端，其他工程师下次打开页面即生效' }
+            : r.message === 'nothing'
+              ? { tone: 'info', text: '已保存（本机）——云端共享未勾选判定标准' }
+              : { tone: 'error', text: `已保存（本机），云端同步失败：${r.message}` },
+        );
+        setTimeout(() => setMsg(null), 6000);
+      });
+    } else {
+      setMsg({ tone: 'success', text: '已保存（本机）' });
+      setTimeout(() => setMsg(null), 2500);
+    }
+  };
+
+  /** 新增一套判定标准 */
+  const handleAdd = (e: FormEvent) => {
+    e.preventDefault();
+    const name = newName.trim();
+    if (!name) { setNameError('请输入名称'); return; }
+    if (criteriaSets[name]) { setNameError(`“${name}”已存在`); return; }
+    saveCriteriaSet(name, { ...DEFAULT_THRESHOLDS });
+    setNewName('');
+    setNameError('');
+    setEditing(name);
+    setMsg({ tone: 'success', text: `已新增判定标准“${name}”，请配置参数后保存` });
+    setTimeout(() => setMsg(null), 3000);
+  };
+
+  /** 删除一套（至少保留一套） */
+  const handleDelete = (name: string) => {
+    if (Object.keys(criteriaSets).length <= 1) {
+      setMsg({ tone: 'error', text: '至少保留一套判定标准' });
+      setTimeout(() => setMsg(null), 3000);
+      return;
+    }
+    deleteCriteriaSet(name);
+    if (editing === name) setEditing(Object.keys(criteriaSets).find((n) => n !== name) ?? '');
+    setMsg({ tone: 'info', text: `已删除“${name}”（本机）。如需同步云端，请点击「推送当前设置到云端」` });
+    setTimeout(() => setMsg(null), 5000);
+  };
+
+  const fieldCls = (err: string) =>
+    `w-20 rounded-lg border px-2.5 py-1.5 text-right font-mono text-sm outline-none transition-colors ${
+      err ? 'border-red-300 bg-red-50 focus:border-red-400' : 'border-slate-300 focus:border-blue-500'
+    }`;
+
+  /* 工程师：只读展示 */
+  if (!canWrite) {
+    return (
+      <Card title="判定标准（统计口径与优秀判定）">
+        <div className="space-y-3 text-sm text-slate-600">
+          <div className="flex items-center gap-2 rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2 text-xs text-amber-700">
+            <Icon name="lock" className="h-3.5 w-3.5 shrink-0" />
+            判定标准由管理员维护，您仅有查看权限；如需调整请联系管理员。
+          </div>
+          {Object.entries(criteriaSets).map(([name, t]) => (
+            <div key={name} className="rounded-lg border border-slate-100 bg-slate-50/60 px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-slate-700">{name}</span>
+                {name === activeName && (
+                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-600">当前使用</span>
+                )}
+              </div>
+              <p className="mt-1 text-xs leading-5 text-slate-500">{criteriaText(t)}</p>
+            </div>
+          ))}
+        </div>
+      </Card>
+    );
+  }
+
+  /* 管理员：完整编辑 */
+  return (
+    <Card title="判定标准（统计口径与优秀判定）">
+      <div className="space-y-4">
+        <p className="text-sm text-slate-600">
+          维护多套判定标准（如 微晶 / 盐 / 其他）。工程师在「报告生成」页选择对应标准后，
+          报告统计与优秀判定将自动按所选标准计算。
+        </p>
+
+        {/* 套切换 + 管理 */}
+        <div className="flex flex-wrap items-center gap-2">
+          {Object.keys(criteriaSets).map((name) => (
+            <div key={name} className="flex items-center">
+              <button
+                type="button"
+                onClick={() => setEditing(name)}
+                className={`rounded-lg border px-3.5 py-1.5 text-sm font-medium transition-colors ${
+                  editing === name
+                    ? 'border-blue-500 bg-blue-50 text-blue-600'
+                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700'
+                }`}
+              >
+                {name}
+                {name === activeName && <span className="ml-1.5 text-[10px] text-blue-400">使用中</span>}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDelete(name)}
+                title={`删除“${name}”`}
+                className="-ml-px rounded-r-lg border border-l-0 border-slate-200 px-2 py-1.5 text-sm leading-none text-slate-300 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-400"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <form onSubmit={handleAdd} className="flex items-center gap-1.5">
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => { setNewName(e.target.value); setNameError(''); }}
+              placeholder="新增标准名称"
+              className="w-28 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-blue-500"
+            />
+            <Button variant="secondary" type="submit">新增</Button>
+          </form>
+        </div>
+        {nameError && <p className="text-xs text-red-500">{nameError}</p>}
+
+        {current ? (
+          <>
+            {/* 有效测试记录判定阈值 */}
+            <div className="rounded-lg border border-slate-100 bg-slate-50/60 px-4 py-3">
+              <div className="mb-2 text-sm font-medium text-slate-700">
+                「{editing}」有效测试记录判定
+              </div>
+              <p className="mb-3 text-[11px] leading-4 text-slate-400">
+                反扫记录需同时满足以下条件才算有效测试记录
+              </p>
+              <div className="grid grid-cols-1 gap-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="w-36 shrink-0 text-xs text-slate-500">PCE 下限（%）</span>
+                  <input
+                    type="number"
+                    step="any"
+                    value={pceMin.value}
+                    onChange={(e) => setPceMin({ value: e.target.value, error: '' })}
+                    className={`${fieldCls(pceMin.error)} flex-1`}
+                  />
+                  {pceMin.error && <span className="text-xs text-red-500">{pceMin.error}</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-36 shrink-0 text-xs text-slate-500">FF 下限</span>
+                  <input
+                    type="number"
+                    step="any"
+                    value={ffMin.value}
+                    onChange={(e) => setFfMin({ value: e.target.value, error: '' })}
+                    className={`${fieldCls(ffMin.error)} flex-1`}
+                  />
+                  {ffMin.error && <span className="text-xs text-red-500">{ffMin.error}</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-36 shrink-0 text-xs text-slate-500">电阻下限（Ω，Rs/Rsh &gt;）</span>
+                  <input
+                    type="number"
+                    step="any"
+                    value={resistanceMin.value}
+                    onChange={(e) => setResistanceMin({ value: e.target.value, error: '' })}
+                    className={`${fieldCls(resistanceMin.error)} flex-1`}
+                  />
+                  {resistanceMin.error && (
+                    <span className="text-xs text-red-500">{resistanceMin.error}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* 优秀批次判定规则 */}
+            <div className="rounded-lg border border-slate-100 bg-slate-50/60 px-4 py-3">
+              <div className="mb-2 text-sm font-medium text-slate-700">「{editing}」优秀批次判定</div>
+              <p className="mb-3 text-[11px] leading-4 text-slate-400">
+                对比批次相对 Baseline 的差值 Δ 满足全部启用条件即「优秀」，否则「不合格」；可单选或多选
+              </p>
+              <div className="space-y-2.5">
+                {RULE_ROWS.map((r) => (
+                  <div key={r.key} className="flex items-center gap-2">
+                    <label className="flex flex-1 cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={ruleOn[r.key]}
+                        onChange={(e) => {
+                          setRuleOn({ ...ruleOn, [r.key]: e.target.checked });
+                          setRuleError('');
+                        }}
+                        className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600"
+                      />
+                      <span className="text-xs text-slate-600">{r.label}</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      disabled={!ruleOn[r.key]}
+                      value={ruleTh[r.key].value}
+                      onChange={(e) =>
+                        setRuleTh({ ...ruleTh, [r.key]: { value: e.target.value, error: '' } })
+                      }
+                      className={`${fieldCls(ruleTh[r.key].error)} w-20 ${
+                        ruleOn[r.key] ? '' : 'cursor-not-allowed bg-slate-100 text-slate-400'
+                      }`}
+                    />
+                    {ruleTh[r.key].error && (
+                      <span className="text-xs text-red-500">{ruleTh[r.key].error}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {ruleError && <p className="mt-2 text-xs text-red-500">{ruleError}</p>}
+            </div>
+
+            <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+              <div className="min-w-0">
+                <p className="truncate text-xs text-slate-400" title={criteriaText(current)}>
+                  {dirty ? (
+                    <span className="text-amber-600">「{editing}」有未保存的修改</span>
+                  ) : (
+                    criteriaTextShort(current)
+                  )}
+                </p>
+                {msg && (
+                  <p
+                    className={`mt-0.5 text-xs ${
+                      msg.tone === 'error' ? 'text-red-500' : msg.tone === 'success' ? 'text-emerald-600' : 'text-blue-600'
+                    }`}
+                  >
+                    {msg.text}
+                  </p>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button onClick={handleSave}>保存「{editing}」</Button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-slate-400">请先新增一套判定标准</p>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 /* ================= 云端共享设置 ================= */
 
 function CloudSyncCard() {
-  const { saveThresholds } = useCriteria();
   const [cfg, setCfg] = useState<CloudConfig>(() => loadCloudConfig());
   const [tokenInput, setTokenInput] = useState('');
   const [syncInfo, setSyncInfo] = useState<CloudSyncInfo | null>(() => loadCloudSyncInfo());
@@ -284,7 +642,7 @@ function CloudSyncCard() {
         return;
       }
       const applied = applyCloudSettings(cloud);
-      if (cloud.criteria) saveThresholds(cloud.criteria);
+      // 判定标准（多套/旧版单套）已由 applyCloudSettings 写入 localStorage，页面刷新后生效
       setSyncInfo(loadCloudSyncInfo());
       const parts: string[] = [];
       if (applied.criteria) parts.push('统计口径');
@@ -852,6 +1210,8 @@ export default function Settings() {
             </span>
           </div>
         )}
+
+        <CriteriaManagerCard />
 
         <MailRecipientsCard />
 
