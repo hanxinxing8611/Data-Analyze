@@ -24,27 +24,14 @@ import { useToast } from '../components/Toast';
 import GanttChart from '../components/charts/GanttChart';
 import type { ScheduleItem } from '../types';
 
-/* ---- 查看筛选（仅影响本页显示范围，与登录身份解耦） ---- */
+/* ---- 身份识别（负责人筛选自动跟随左侧边栏选择的身份） ---- */
 
-const SCHEDULE_FILTER_KEY = 'dv-schedule-filter';
-/** 旧版筛选值（曾与登录身份共用），首次访问时迁移 */
-const LEGACY_FILTER_KEY = 'dv-current-engineer';
-
-function loadScheduleFilter(): string {
+/** 当前登录身份（全局），身份切换事件后需重新读取 */
+function readCurrentIdentity(): string {
   try {
-    const v = localStorage.getItem(SCHEDULE_FILTER_KEY);
-    if (v !== null) return v;
-    return localStorage.getItem(LEGACY_FILTER_KEY) || '';
+    return localStorage.getItem('dv-current-engineer') || '';
   } catch {
     return '';
-  }
-}
-
-function saveScheduleFilter(name: string): void {
-  try {
-    localStorage.setItem(SCHEDULE_FILTER_KEY, name);
-  } catch {
-    /* 忽略 */
   }
 }
 
@@ -201,7 +188,8 @@ export default function Schedule() {
   const { thresholds } = useCriteria();
   const [items, setItems] = useState<ScheduleItem[]>([]);
   const [engineers, setEngineers] = useState<EngineerEntry[]>([]);
-  const [currentEngineer, setCurrentEngineer] = useState('');
+  /** 当前身份（自动跟随左侧边栏选择的身份，无独立筛选） */
+  const [currentEngineer, setCurrentEngineer] = useState(readCurrentIdentity);
   const [form, setForm] = useState(emptyForm);
   /** 截止日期是否被手动修改过（手动修改后不再随开始日期自动重算） */
   const [deadlineManual, setDeadlineManual] = useState(false);
@@ -221,7 +209,13 @@ export default function Schedule() {
 
   useEffect(() => {
     setEngineers(loadEngineersConfig());
-    setCurrentEngineer(loadScheduleFilter());
+  }, []);
+
+  /* 身份切换事件（侧边栏选择身份时全站广播）→ 同步本页筛选 */
+  useEffect(() => {
+    const handler = () => setCurrentEngineer(readCurrentIdentity());
+    window.addEventListener('dv-permission-change', handler);
+    return () => window.removeEventListener('dv-permission-change', handler);
   }, []);
 
   /* 逾期/到期提醒列表 */
@@ -325,11 +319,6 @@ export default function Schedule() {
       saveEngineersConfig(next);
       return next;
     });
-    // 如果删除的是当前筛选的工程师，同时清除筛选
-    if (currentEngineer === name) {
-      setCurrentEngineer('');
-      saveScheduleFilter('');
-    }
   };
 
   /* 提交时自动保存/更新工程师信息 */
@@ -558,31 +547,13 @@ export default function Schedule() {
         }
       />
 
-      {/* 负责人筛选（仅影响查看范围，登录身份请在左侧边栏切换） */}
-      {engineers.length > 0 && (
-        <div className="mb-4 flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2.5">
-          <span className="text-xs font-medium text-slate-500">筛选负责人：</span>
-          <select
-            value={currentEngineer}
-            onChange={(e) => {
-              const v = e.target.value;
-              setCurrentEngineer(v);
-              saveScheduleFilter(v);
-            }}
-            className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-700"
-          >
-            <option value="">全部负责人</option>
-            {engineers.map((e) => (
-              <option key={e.name} value={e.name}>
-                {e.name}
-              </option>
-            ))}
-          </select>
-          {currentEngineer && (
-            <span className="text-xs text-slate-400">
-              （仅显示 {currentEngineer} 的提醒和任务）
-            </span>
-          )}
+      {/* 身份提示（负责人范围自动跟随左侧边栏身份，无需手动筛选） */}
+      {currentEngineer && (
+        <div className="mb-4 flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-2.5">
+          <span className="text-xs text-slate-500">
+            当前身份：<span className="font-medium text-slate-700">{currentEngineer}</span>
+            <span className="ml-2 text-slate-400">（仅显示该负责人的提醒；计划列表与时间轴为全量）</span>
+          </span>
           {myDueItems.length > 0 && !showReminder && (
             <Button variant="secondary" onClick={() => setShowReminder(true)}>
               查看提醒 ({myDueItems.length})

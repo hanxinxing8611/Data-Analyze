@@ -270,6 +270,9 @@ async function fetchCloudTaskStatsSha(cfg: CloudConfig): Promise<string | null> 
     },
   );
   if (res.status === 404) return null;
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('Token 无效或已过期（HTTP 401/403），请在系统设置中更换新 Token');
+  }
   if (!res.ok) throw new Error(`读取云端任务统计文件失败（HTTP ${res.status}）`);
   const data = (await res.json()) as { sha?: string };
   return typeof data.sha === 'string' ? data.sha : null;
