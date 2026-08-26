@@ -55,35 +55,7 @@ export default function TaskStats() {
   /* 统计数据：仅云端 */
   const stats = useMemo(() => cloudStats ?? [], [cloudStats]);
 
-  if (!dbReady || loading) return <Loading text="正在从云端拉取统计数据…" />;
-
-  if (stats.length === 0) {
-    return (
-      <div>
-        <PageHeader title="任务统计" description="工程师工作效率、质量、执行力与负荷统计" />
-        <Card>
-          <EmptyState
-            icon="chart"
-            title="暂无云端统计数据"
-            description="请先在「验证计划」页添加验证计划并同步到云端，然后再回来查看统计"
-          />
-        </Card>
-      </div>
-    );
-  }
-
-  /* 卡片数据统一从云端 stats 汇总 */
-  const totalBatches = stats.reduce((sum, s) => sum + s.batchCount, 0);
-  const totalTasks = stats.reduce((sum, s) => sum + s.totalTasks, 0);
-  const totalCompleted = stats.reduce((sum, s) => sum + s.completedTasks, 0);
-  const completionRate = totalTasks > 0 ? (totalCompleted / totalTasks) * 100 : 0;
-
-  /* 逾期数实时计算（基于云端验证计划 + 当前日期，不依赖云端快照） */
-  const today = new Date().toISOString().slice(0, 10);
-  const getRealOverdue = (engineerName: string) =>
-    cloudSchedules.filter((s) => s.engineer_name === engineerName && s.status !== 'completed' && s.report_deadline < today).length;
-
-  /* ---- 按周/按月切换 ---- */
+  /* ---- 按周/按月切换（注意：所有 hooks 必须在任何提前 return 之前调用） ---- */
   type ChartMode = 'week' | 'month';
   const [chartMode, setChartMode] = useState<ChartMode>('week');
 
@@ -153,6 +125,34 @@ export default function TaskStats() {
       return null;
     }
   }, [cloudSchedules, chartMode]);
+
+  if (!dbReady || loading) return <Loading text="正在从云端拉取统计数据…" />;
+
+  if (stats.length === 0) {
+    return (
+      <div>
+        <PageHeader title="任务统计" description="工程师工作效率、质量、执行力与负荷统计" />
+        <Card>
+          <EmptyState
+            icon="chart"
+            title="暂无云端统计数据"
+            description="请先在「验证计划」页添加验证计划并同步到云端，然后再回来查看统计"
+          />
+        </Card>
+      </div>
+    );
+  }
+
+  /* 卡片数据统一从云端 stats 汇总 */
+  const totalBatches = stats.reduce((sum, s) => sum + s.batchCount, 0);
+  const totalTasks = stats.reduce((sum, s) => sum + s.totalTasks, 0);
+  const totalCompleted = stats.reduce((sum, s) => sum + s.completedTasks, 0);
+  const completionRate = totalTasks > 0 ? (totalCompleted / totalTasks) * 100 : 0;
+
+  /* 逾期数实时计算（基于云端验证计划 + 当前日期，不依赖云端快照） */
+  const today = new Date().toISOString().slice(0, 10);
+  const getRealOverdue = (engineerName: string) =>
+    cloudSchedules.filter((s) => s.engineer_name === engineerName && s.status !== 'completed' && s.report_deadline < today).length;
 
   /* 进度条色阶 */
   function progressColor(ratio: number): string {
