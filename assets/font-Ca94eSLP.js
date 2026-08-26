@@ -1,0 +1,1 @@
+const e='"Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", Arial, sans-serif';function a(e,a="微软雅黑"){e.eachSheet(e=>{e.eachRow({includeEmpty:!1},e=>{e.eachCell({includeEmpty:!1},e=>{e.font={...e.font,name:a}})})})}export{e as F,a};
