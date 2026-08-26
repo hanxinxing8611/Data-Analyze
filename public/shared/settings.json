@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-26T04:02:23.008Z",
+  "updatedAt": "2026-08-26T06:53:48.398Z",
   "criteria": {
     "championRule": {
       "enabled": true,
@@ -45,6 +45,14 @@
     {
       "name": "覃军玉",
       "email": "junyu.qin@jingling-tech.com"
+    },
+    {
+      "name": "韩新星",
+      "email": "xinxing.han@jingling-tech.com"
+    },
+    {
+      "name": "Jason",
+      "email": "jason@jingling-tech.com"
     }
   ]
 }
