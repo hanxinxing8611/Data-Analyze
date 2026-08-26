@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-26T07:24:14.313Z",
+  "updatedAt": "2026-08-26T08:19:35.611Z",
   "criteria": {
     "championRule": {
       "enabled": true,
@@ -13,7 +13,7 @@
       "enabled": false,
       "threshold": 0
     },
-    "pceMin": 18,
+    "pceMin": 15,
     "ffMin": 0.5,
     "resistanceMin": 0
   },
