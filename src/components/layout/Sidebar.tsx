@@ -3,11 +3,10 @@ import { NavLink } from 'react-router-dom';
 import Icon from './Icon';
 import { useData } from '../../store/DataContext';
 import {
-  loadIdentityOptions,
   setCurrentEngineer,
   usePermission,
 } from '../../utils/permissions';
-import { loadEngineersConfig } from '../../utils/cloudSettings';
+import { loadEngineersConfig, type EngineerEntry } from '../../utils/cloudSettings';
 
 const NAV_ITEMS = [
   { to: '/', label: '数据总览', icon: 'dashboard', end: true },
@@ -22,8 +21,9 @@ const NAV_ITEMS = [
 export default function Sidebar() {
   const { dbReady } = useData();
   const { canWrite, engineerName, engineerEmail } = usePermission();
-  const [identityOptions, setIdentityOptions] = useState<string[]>(() =>
-    loadIdentityOptions(),
+  /** 点击下拉框时重新读取名录（云端拉取完成后可刷新选项） */
+  const [engineerList, setEngineerList] = useState<EngineerEntry[]>(() =>
+    loadEngineersConfig(),
   );
 
   return (
@@ -117,7 +117,7 @@ export default function Sidebar() {
           <div className="min-w-0 w-full text-center">
             <select
               value={engineerEmail}
-              onClick={() => setIdentityOptions(loadIdentityOptions())}
+              onClick={() => setEngineerList(loadEngineersConfig())}
               onChange={(e) => {
                 const email = e.target.value;
                 const eng = loadEngineersConfig().find((en) => en.email === email);
@@ -126,14 +126,14 @@ export default function Sidebar() {
               title="切换当前身份（需与系统设置中配置的邮箱一致）"
               className="w-full cursor-pointer appearance-none truncate rounded-md border border-white/10 bg-slate-700/60 px-2 py-1 text-xs font-medium text-slate-100 outline-none transition-colors hover:border-white/20 focus:border-blue-500/60"
             >
-              <option value="">选择邮箱…</option>
-              {loadEngineersConfig().map((en) => (
+              <option value="" className="bg-slate-700 text-slate-100">选择邮箱…</option>
+              {engineerList.map((en) => (
                 <option
                   key={en.email || en.name}
                   value={en.email}
                   className="bg-slate-700 text-slate-100"
                 >
-                  {en.email || en.name}
+                  {en.email ? en.email : `${en.name}（未配置邮箱）`}
                 </option>
               ))}
             </select>
@@ -155,23 +155,25 @@ export default function Sidebar() {
 
       {/* 数据库状态 */}
       <div className="relative border-t border-white/[0.07] px-5 py-4">
-        <div className="flex items-center gap-2.5">
-          <span className="relative flex h-2 w-2">
-            {dbReady && (
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-40" />
-            )}
-            <span
-              className={`relative inline-flex h-2 w-2 rounded-full ${
-                dbReady ? 'bg-emerald-400' : 'bg-amber-400'
-              }`}
-            />
-          </span>
-          <span className="text-xs font-medium text-slate-400">
-            {dbReady ? '数据库就绪' : '数据库初始化中…'}
-          </span>
-        </div>
-        <div className="mt-1.5 pl-[18px] text-[10.5px] tracking-wide text-slate-600">
+        <div className="flex flex-col items-center gap-1.5">
+          <div className="flex items-center gap-2.5">
+            <span className="relative flex h-2 w-2">
+              {dbReady && (
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-40" />
+              )}
+              <span
+                className={`relative inline-flex h-2 w-2 rounded-full ${
+                  dbReady ? 'bg-emerald-400' : 'bg-amber-400'
+                }`}
+              />
+            </span>
+            <span className="text-xs font-medium text-slate-400">
+              {dbReady ? '数据库就绪' : '数据库初始化中…'}
+            </span>
+          </div>
+          <div className="text-[10.5px] tracking-wide text-slate-600">
             本地存储 · IndexedDB
+          </div>
         </div>
       </div>
     </aside>

@@ -57,23 +57,6 @@ export function setCurrentEngineer(name: string): void {
   notifyPermissionChanged();
 }
 
-/**
- * 身份下拉候选：工程师名录 ∪ 管理员列表（去重，保证管理员姓名始终可选）
- * 优先从云端同步的工程师名录读取，向后兼容旧 dv-engineers 数据
- */
-export function loadIdentityOptions(): string[] {
-  const out: string[] = [];
-  const push = (n: string) => {
-    const t = n.trim();
-    if (t && !out.includes(t)) out.push(t);
-  };
-  // 来源1：云端工程师名录（主要来源）
-  loadEngineersConfig().forEach((e) => push(e.name));
-  // 来源2：管理员列表（兜底，即使不在名录中也能选）
-  loadAdminNames().forEach(push);
-  return out;
-}
-
 /** 从工程师名录中查找工程师邮箱 */
 export function findEngineerEmail(name: string): string {
   const n = name.trim();
@@ -96,7 +79,11 @@ export function isAdmin(engineerName?: string): boolean {
   if (!name) return false; // 未选择工程师身份 → 工程师
   const admins = loadAdminNames();
   if (admins.length === 0) return true; // 未配置管理员列表 → 全员管理员
-  return admins.includes(name);
+  if (admins.includes(name)) return true;
+  // 兼容管理员列表中存的是邮箱：通过工程师名录将邮箱映射为姓名
+  const email = findEngineerEmail(name);
+  if (email && admins.includes(email)) return true;
+  return false;
 }
 
 /** 判断当前用户是否有写权限（增删改验证计划、修改设置） */
