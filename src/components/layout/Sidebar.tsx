@@ -6,8 +6,8 @@ import {
   loadIdentityOptions,
   setCurrentEngineer,
   usePermission,
-  findEngineerEmail,
 } from '../../utils/permissions';
+import { loadEngineersConfig } from '../../utils/cloudSettings';
 
 const NAV_ITEMS = [
   { to: '/', label: '数据总览', icon: 'dashboard', end: true },
@@ -116,25 +116,30 @@ export default function Sidebar() {
           </div>
           <div className="min-w-0 w-full text-center">
             <select
-              value={engineerName}
+              value={engineerEmail}
               onClick={() => setIdentityOptions(loadIdentityOptions())}
-              onChange={(e) => setCurrentEngineer(e.target.value)}
-              title="切换当前身份（姓名需与管理员列表一致才具备管理员权限）"
-              className="w-full cursor-pointer appearance-none truncate rounded-md border border-white/10 bg-white/[0.05] px-2 py-1 text-xs font-medium text-slate-200 outline-none transition-colors hover:border-white/20 focus:border-blue-500/60"
+              onChange={(e) => {
+                const email = e.target.value;
+                const eng = loadEngineersConfig().find((en) => en.email === email);
+                setCurrentEngineer(eng ? eng.name : '');
+              }}
+              title="切换当前身份（需与系统设置中配置的邮箱一致）"
+              className="w-full cursor-pointer appearance-none truncate rounded-md border border-white/10 bg-slate-700/60 px-2 py-1 text-xs font-medium text-slate-100 outline-none transition-colors hover:border-white/20 focus:border-blue-500/60"
             >
-              <option value="">选择身份…</option>
-              {identityOptions.map((n) => {
-                const email = findEngineerEmail(n);
-                return (
-                  <option key={n} value={n}>
-                    {n}{email ? ` (${email})` : ''}
-                  </option>
-                );
-              })}
+              <option value="">选择邮箱…</option>
+              {loadEngineersConfig().map((en) => (
+                <option
+                  key={en.email || en.name}
+                  value={en.email}
+                  className="bg-slate-700 text-slate-100"
+                >
+                  {en.email || en.name}
+                </option>
+              ))}
             </select>
-            {engineerEmail && (
-              <div className="mt-0.5 truncate text-[10px] text-slate-500" title={engineerEmail}>
-                {engineerEmail}
+            {engineerName && (
+              <div className="mt-0.5 truncate text-[10px] text-slate-400" title={engineerName}>
+                {engineerName}
               </div>
             )}
             <div
