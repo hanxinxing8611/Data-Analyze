@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-26T03:57:41.366Z",
+  "updatedAt": "2026-08-26T03:58:00.779Z",
   "criteria": {
     "championRule": {
       "enabled": true,
@@ -41,6 +41,10 @@
     {
       "name": "晏广元",
       "email": "guangyuan.yan@jingling-tech.com"
+    },
+    {
+      "name": "覃军玉",
+      "email": "junyu.qin@jingling-tech.com"
     }
   ]
 }
